@@ -3,7 +3,7 @@ use gpui_component::{Icon, IconName};
 
 impl SettingsView {
     pub(super) fn modal_open(&self) -> bool {
-        self.app_dialog.is_some() || self.recording.is_some()
+        self.app_dialog.is_some() || self.recording.is_some() || self.editor_blocked.is_some()
     }
 
     fn controls_blocked(&self) -> bool {
@@ -222,8 +222,8 @@ impl SettingsView {
                         el.child(
                             Button::new("delete-application-gestures")
                                 .ghost()
-                                .small()
-                                .icon(Icon::default().path("icons/glint-trash.svg"))
+                                .size(px(36.))
+                                .child(Icon::default().path("icons/glint-trash.svg").size(px(21.)))
                                 .tooltip("删除应用手势")
                                 .text_color(rgb(self.palette.error))
                                 .disabled(self.controls_blocked())
@@ -763,6 +763,24 @@ impl SettingsView {
                 current.source_package == row.source_package && current.action.id == row.action.id
             });
             let entry = row.clone();
+            let removal = row.clone();
+            let restores_global = !row.inherited
+                && row.source_package != "global"
+                && self.effective_config().packages.iter().any(|package| {
+                    package.id == row.source_package
+                        && package
+                            .actions
+                            .iter()
+                            .any(|action| action.id == row.action.id)
+                })
+                && self.application().is_some_and(|app| app.inherit_global)
+                && self.effective_config().packages.iter().any(|package| {
+                    package.id == "global"
+                        && package
+                            .actions
+                            .iter()
+                            .any(|action| action.gesture == row.action.gesture)
+                });
             list = list.child(
                 div()
                     .id(SharedString::from(format!(
@@ -802,7 +820,46 @@ impl SettingsView {
                                         h_flex()
                                             .justify_between()
                                             .gap_2()
-                                            .child(div().truncate().child(row.action.name.clone()))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .child(row.action.name.clone()),
+                                            )
+                                            .when(!row.inherited, |el| {
+                                                el.child(
+                                                    Button::new(SharedString::from(format!(
+                                                        "delete-binding-{}-{}",
+                                                        row.source_package, row.action.id
+                                                    )))
+                                                    .ghost()
+                                                    .size(px(28.))
+                                                    .flex_shrink_0()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/glint-trash.svg")
+                                                            .size(px(17.)),
+                                                    )
+                                                    .text_color(rgb(self.palette.muted))
+                                                    .tooltip(if restores_global {
+                                                        "删除专属绑定，恢复全局动作"
+                                                    } else {
+                                                        "删除绑定"
+                                                    })
+                                                    .disabled(disabled)
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            this.request_remove_action(
+                                                                removal.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    )),
+                                                )
+                                            })
                                             .when(row.inherited, |el| {
                                                 el.child(
                                                     div()
@@ -907,14 +964,6 @@ impl SettingsView {
                 .into_any_element();
         };
         let editable = self.is_editable() && !self.modal_open();
-        let overridden = self.current_scope() != Some("global")
-            && self.application().is_none_or(|app| app.inherit_global)
-            && self.effective_config().packages.iter().any(|p| {
-                p.id == "global"
-                    && p.actions
-                        .iter()
-                        .any(|a| a.gesture == selected.action.gesture)
-            });
         editor = editor
             .child(
                 h_flex()
@@ -1211,31 +1260,84 @@ impl SettingsView {
                         ))
                     }),
             );
-            editor = editor.child(
-                h_flex().child(
-                    Button::new("delete-gesture")
-                        .ghost()
-                        .small()
-                        .label(if overridden {
-                            "恢复为全局配置"
-                        } else {
-                            "删除绑定"
-                        })
-                        .disabled(!editable)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.remove_action(window, cx)),
-                        ),
-                ),
-            );
         }
-        div()
-            .id("gesture-editor-scroll")
+        let validation = if self.editor_dirty && !selected.inherited {
+            self.editor_action(cx).err()
+        } else {
+            None
+        };
+        v_flex()
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .overflow_y_scroll()
-            .child(editor)
+            .when_some(validation, |el, reason| {
+                el.child(
+                    v_flex()
+                        .px_5()
+                        .py_3()
+                        .gap_2()
+                        .flex_shrink_0()
+                        .bg(rgb(self.palette.bg))
+                        .border_b_1()
+                        .border_color(rgb(self.palette.border))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Icon::new(IconName::TriangleAlert)
+                                        .size(px(16.))
+                                        .text_color(rgb(self.palette.error)),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(rgb(self.palette.error))
+                                        .child(format!("手势尚未完成：{reason}")),
+                                ),
+                        )
+                        .child(self.muted("补全配置后才能保存或切换；也可以放弃此次编辑。"))
+                        .child(
+                            h_flex().child(
+                                Button::new("discard-incomplete-editor")
+                                    .outline()
+                                    .small()
+                                    .label("放弃此次编辑")
+                                    .disabled(self.controls_blocked())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.discard_editor_changes(window, cx)
+                                    })),
+                            ),
+                        ),
+                )
+            })
+            .child(
+                div()
+                    .id("gesture-editor-scroll")
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(editor),
+            )
             .into_any_element()
+    }
+
+    fn render_editor_blocked_modal(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let reason = self.editor_blocked.as_ref()?;
+        Some(self.modal_frame().child(
+            v_flex().gap_4().p_6().w(px(440.)).max_w_full().rounded_lg()
+                .bg(rgb(self.palette.panel)).border_1().border_color(rgb(self.palette.border))
+                .child(h_flex().gap_2()
+                    .child(Icon::new(IconName::TriangleAlert).size(px(22.)).text_color(rgb(self.palette.error)))
+                    .child(div().text_lg().font_weight(FontWeight::MEDIUM).child("当前手势尚未完成")))
+                .child(div().text_color(rgb(self.palette.error)).child(reason.clone()))
+                .child(self.muted("此次操作尚未执行。继续编辑会保留所有输入；放弃只撤销当前手势此次编辑，其他已暂存配置不受影响。"))
+                .child(h_flex().gap_2().justify_end().flex_wrap()
+                    .child(Button::new("discard-blocked-editor").outline().small().label("放弃此次编辑")
+                        .on_click(cx.listener(|this, _, window, cx| this.discard_editor_changes(window, cx))))
+                    .child(Button::new("continue-blocked-editor").primary().small().label("继续编辑")
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_editor_blocked(cx)))))
+        ).into_any_element())
     }
 
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1550,6 +1652,7 @@ impl Render for SettingsView {
             )
             .children(self.render_app_modal(cx))
             .children(self.render_recording_modal(cx))
+            .children(self.render_editor_blocked_modal(cx))
             .children(Root::render_dialog_layer(window, cx))
     }
 }

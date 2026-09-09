@@ -114,6 +114,7 @@ pub(super) struct SettingsView {
     scope_drafts: HashMap<String, ScopeDraft>,
     general_dirty: bool,
     editor_dirty: bool,
+    editor_blocked: Option<String>,
     loading: bool,
     prefs_loaded: bool,
     pending: bool,
@@ -338,7 +339,10 @@ impl SettingsView {
                 return;
             }
             let _ = weak.update(cx, |this, cx| {
-                if !this.recording_shortcut {
+                if !this.recording_shortcut
+                    || this.editor_blocked.is_some()
+                    || window.has_active_dialog(cx)
+                {
                     return;
                 }
                 window.prevent_default();
@@ -455,6 +459,7 @@ impl SettingsView {
             scope_drafts: HashMap::new(),
             general_dirty: false,
             editor_dirty: false,
+            editor_blocked: None,
             loading: false,
             prefs_loaded: false,
             pending: false,
@@ -869,7 +874,9 @@ impl SettingsView {
     }
     fn stash_editor(&mut self, cx: &mut Context<Self>) -> bool {
         if self.recording_shortcut {
-            self.error("请先确认或取消快捷键录入", cx);
+            let reason = "请先确认或取消快捷键录入".to_owned();
+            self.editor_blocked = Some(reason.clone());
+            self.error(reason, cx);
             return false;
         }
         if !self.editor_dirty {
@@ -885,6 +892,7 @@ impl SettingsView {
         }
         match self.editor_action(cx) {
             Err(error) => {
+                self.editor_blocked = Some(error.clone());
                 self.error(error, cx);
                 false
             }
@@ -900,6 +908,35 @@ impl SettingsView {
                 true
             }
         }
+    }
+    fn dismiss_editor_blocked(&mut self, cx: &mut Context<Self>) {
+        self.editor_blocked = None;
+        cx.notify();
+    }
+    fn discard_editor_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Only the unstashed editor is discarded. Valid changes already staged
+        // in this or another scope remain available through effective_config.
+        let previous = self
+            .selected
+            .as_ref()
+            .map(|row| (row.source_package.clone(), row.action.id.clone()));
+        let restored = self.all_rows().into_iter().find(|row| {
+            previous
+                .as_ref()
+                .is_some_and(|(scope, id)| &row.source_package == scope && &row.action.id == id)
+        });
+        self.editor_blocked = None;
+        self.editor_dirty = false;
+        self.recording_shortcut = false;
+        self.shortcut_candidate = None;
+        if let Some(row) = restored {
+            self.load_row(row, window, cx);
+        } else {
+            self.select_first(window, cx);
+        }
+        self.is_error = false;
+        self.notice = "已放弃当前未暂存的编辑，其他修改已保留".into();
+        cx.notify();
     }
     fn new_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.connected
@@ -962,16 +999,54 @@ impl SettingsView {
         self.editor_dirty = true;
         cx.notify();
     }
-    fn remove_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.selected.clone() else {
-            return;
-        };
-        if row.inherited || self.pending {
+    fn request_remove_action(
+        &mut self,
+        row: GestureRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if row.inherited
+            || !self.connected
+            || self.pending
+            || self
+                .application()
+                .is_some_and(|application| application.disabled)
+        {
             return;
         }
-        let scope = self.current_scope().unwrap_or("global").to_owned();
+        let Some(scope) = self.current_scope().map(str::to_owned) else {
+            return;
+        };
+        if row.source_package != scope {
+            return;
+        }
+        let is_current = self.selected.as_ref().is_some_and(|selected| {
+            selected.source_package == row.source_package && selected.action.id == row.action.id
+        });
+        // Removing the current draft is an escape from incomplete input. A
+        // different target must first preserve the editor before confirmation.
+        if !is_current && !self.stash_editor(cx) {
+            return;
+        }
+        let name = if is_current {
+            self.value("action_name", cx)
+        } else {
+            row.action.name.clone()
+        };
+        let name = if name.trim().is_empty() {
+            "未命名手势".to_owned()
+        } else {
+            name
+        };
         let weak = cx.entity().downgrade();
         let restoring = scope != "global"
+            && self.effective_config().packages.iter().any(|package| {
+                package.id == scope
+                    && package
+                        .actions
+                        .iter()
+                        .any(|action| action.id == row.action.id)
+            })
             && self
                 .application()
                 .is_none_or(|application| application.inherit_global)
@@ -990,9 +1065,9 @@ impl SettingsView {
             dialog
                 .title(label)
                 .child(if restoring {
-                    "移除当前应用的覆盖后，将恢复继承全局动作。"
+                    format!("确定移除“{name}”的应用专属绑定？移除后将恢复继承全局动作。")
                 } else {
-                    "删除动作绑定，保留轨迹模板。"
+                    format!("确定删除“{name}”的动作绑定？轨迹模板会保留。")
                 })
                 .confirm()
                 .button_props(
@@ -1013,8 +1088,16 @@ impl SettingsView {
                             draft.removed.push(row.action.id.clone());
                         }
                         draft.dirty = true;
-                        this.editor_dirty = false;
-                        this.select_first(window, cx);
+                        if this.current_scope() == Some(scope.as_str())
+                            && this.selected.as_ref().is_some_and(|selected| {
+                                selected.source_package == row.source_package
+                                    && selected.action.id == row.action.id
+                            })
+                        {
+                            this.editor_blocked = None;
+                            this.select_first(window, cx);
+                        }
+                        this.is_error = false;
                         this.notice = "修改已暂存，点击右下角应用设置生效".into();
                         cx.notify();
                     });
