@@ -1,0 +1,25 @@
+[package]
+name = "glint-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log = { version = "0.4", features = ["std"] }
+serde_json.workspace = true
+serde.workspace = true
+glint-core.workspace = true
+glint-ipc.workspace = true
+gpui = "=0.2.2"
+gpui-component = "=0.5.1"
+gpui-component-assets = "=0.5.1"
+
+smol = "2"
+
+[build-dependencies]
+embed-resource = "3.0"
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

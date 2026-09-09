@@ -1,0 +1,21 @@
+[package]
+name = "glint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log = "0.4"
+anyhow.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+glint-core.workspace = true
+glint-platform.workspace = true
+glint-ipc.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+embed-resource = "3.0"

@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "stroke_button": "right",
+  "pen": {
+    "color": "#69E0C3",
+    "invalid_color": "#9CA3AF",
+    "width": 4,
+    "opacity": 0.85
+  },
+  "logging": {
+    "level": "info"
+  },
+  "threshold": 0.82,
+  "min_distance": 24,
+  "excluded": [],
+  "packages": [
+    {
+      "id": "global",
+      "name": "通用",
+      "match": [
+        ".*"
+      ],
+      "actions": [
+        {
+          "id": "back",
+          "name": "后退",
+          "gesture": "left",
+          "action": {
+            "type": "keys",
+            "keys": "ALT+LEFT"
+          }
+        },
+        {
+          "id": "forward",
+          "name": "前进",
+          "gesture": "right",
+          "action": {
+            "type": "keys",
+            "keys": "ALT+RIGHT"
+          }
+        },
+        {
+          "id": "page_up",
+          "name": "往上滚",
+          "gesture": "up",
+          "action": {
+            "type": "keys",
+            "keys": "PAGEUP"
+          }
+        },
+        {
+          "id": "page_down",
+          "name": "往下滚",
+          "gesture": "down",
+          "action": {
+            "type": "keys",
+            "keys": "PAGEDOWN"
+          }
+        },
+        {
+          "id": "volume_up",
+          "name": "增大音量",
+          "gesture": "up+wheel_up",
+          "action": {
+            "type": "keys",
+            "keys": "VOLUMEUP"
+          }
+        },
+        {
+          "id": "volume_down",
+          "name": "降低音量",
+          "gesture": "down+wheel_down",
+          "action": {
+            "type": "keys",
+            "keys": "VOLUMEDOWN"
+          }
+        },
+        {
+          "id": "refresh",
+          "name": "刷新",
+          "gesture": "up_down",
+          "action": {
+            "type": "keys",
+            "keys": "F5"
+          }
+        },
+        {
+          "id": "new_tab",
+          "name": "新建标签",
+          "gesture": "right_down",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+T"
+          }
+        },
+        {
+          "id": "new_tab_click",
+          "name": "新建标签",
+          "gesture": "left_click",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+T"
+          }
+        },
+        {
+          "id": "reopen_tab",
+          "name": "恢复关闭的标签",
+          "gesture": "right_down+left_click",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+SHIFT+T"
+          }
+        },
+        {
+          "id": "close_tab",
+          "name": "关闭标签",
+          "gesture": "down_then_right",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+W"
+          }
+        },
+        {
+          "id": "close_window",
+          "name": "退出窗口",
+          "gesture": "down_then_left",
+          "action": {
+            "type": "keys",
+            "keys": "ALT+F4"
+          }
+        },
+        {
+          "id": "force_close",
+          "name": "强制退出",
+          "gesture": "down_then_left+left_click",
+          "action": {
+            "type": "window",
+            "operation": "force_close"
+          }
+        },
+        {
+          "id": "minimize",
+          "name": "最小化窗口",
+          "gesture": "down_left",
+          "action": {
+            "type": "window",
+            "operation": "minimize"
+          }
+        },
+        {
+          "id": "maximize",
+          "name": "切换最大化",
+          "gesture": "up_right",
+          "action": {
+            "type": "window",
+            "operation": "toggle_maximize"
+          }
+        },
+        {
+          "id": "fullscreen",
+          "name": "全屏",
+          "gesture": "up_right+left_click",
+          "action": {
+            "type": "keys",
+            "keys": "F11"
+          }
+        },
+        {
+          "id": "toggle_topmost",
+          "name": "切换置顶",
+          "gesture": "up_then_right_then_up",
+          "action": {
+            "type": "window",
+            "operation": "toggle_topmost"
+          }
+        },
+        {
+          "id": "previous_tab",
+          "name": "上一标签",
+          "gesture": "up_then_left",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+SHIFT+TAB"
+          }
+        },
+        {
+          "id": "next_tab",
+          "name": "下一标签",
+          "gesture": "up_then_right",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+TAB"
+          }
+        },
+        {
+          "id": "home",
+          "name": "Home 键",
+          "gesture": "left_up",
+          "action": {
+            "type": "keys",
+            "keys": "HOME"
+          }
+        },
+        {
+          "id": "end",
+          "name": "End 键",
+          "gesture": "left_down",
+          "action": {
+            "type": "keys",
+            "keys": "END"
+          }
+        },
+        {
+          "id": "previous_tab_wheel",
+          "name": "上一标签",
+          "gesture": "wheel_up",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+SHIFT+TAB"
+          }
+        },
+        {
+          "id": "next_tab_wheel",
+          "name": "下一标签",
+          "gesture": "wheel_down",
+          "action": {
+            "type": "keys",
+            "keys": "CTRL+TAB"
+          }
+        },
+        {
+          "id": "backspace",
+          "name": "退格",
+          "gesture": "left_right",
+          "action": {
+            "type": "keys",
+            "keys": "BACKSPACE"
+          }
+        },
+        {
+          "id": "delete",
+          "name": "删除",
+          "gesture": "right_left",
+          "action": {
+            "type": "keys",
+            "keys": "DELETE"
+          }
+        },
+        {
+          "id": "screenshot",
+          "name": "截图",
+          "gesture": "up_then_right_then_down_then_left",
+          "action": {
+            "type": "keys",
+            "keys": "PRINTSCREEN"
+          }
+        }
+      ]
+    }
+  ]
+}

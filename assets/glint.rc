@@ -1,0 +1,3 @@
+// Resource 1 is used by GPUI's Windows window class and the native tray.
+1 ICON "../../assets/glint.ico"
+2 ICON "../../assets/glint-paused.ico"

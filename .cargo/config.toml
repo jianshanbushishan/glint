@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# Use the LLD bundled with Rust to speed up linking without a separate LLVM install.
+linker = "rust-lld.exe"
