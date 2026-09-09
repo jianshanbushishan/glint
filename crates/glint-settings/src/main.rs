@@ -92,16 +92,15 @@ fn start_worker(dir: PathBuf, smoke_test: bool) -> (mpsc::Sender<Job>, mpsc::Rec
                             }
                         }
                     }
-                    send(Command::Status, false);
-                    send(Command::GetConfig, true);
+                    send(Command::GetConfig, false);
                 }
                 Ok(Job::Command(command)) => {
                     send(command, false);
-                    send(Command::Status, true);
                     send(Command::GetConfig, true);
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if !smoke_test && send(Command::Status, true) {
+                    // GetConfig includes Status, so one round trip refreshes both.
+                    if !smoke_test {
                         send(Command::GetConfig, true);
                     }
                 }

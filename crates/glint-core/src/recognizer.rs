@@ -222,7 +222,7 @@ impl PrefixTracker {
     }
 }
 
-fn direction_score(sample: &[(f64, f64)], reference: &[(f64, f64)]) -> f32 {
+pub(crate) fn direction_score(sample: &[(f64, f64)], reference: &[(f64, f64)]) -> f32 {
     (sample
         .iter()
         .zip(reference)
@@ -234,7 +234,7 @@ fn direction_score(sample: &[(f64, f64)], reference: &[(f64, f64)]) -> f32 {
 
 /// Direction vectors sampled at equal arc-length intervals. Translation and
 /// uniform scale are deliberately ignored; direction and rotation are retained.
-fn directions(points: &[Point]) -> Option<Vec<(f64, f64)>> {
+pub(crate) fn directions(points: &[Point]) -> Option<Vec<(f64, f64)>> {
     if points.len() < 2 || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
         return None;
     }

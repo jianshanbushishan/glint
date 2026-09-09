@@ -1,6 +1,27 @@
 use glint_core::{ActionKind, ActionSpec, Config};
 use std::collections::BTreeMap;
 
+pub const WINDOW_OPERATION_IDS: [&str; 7] = [
+    "minimize",
+    "maximize",
+    "toggle_maximize",
+    "restore",
+    "close",
+    "force_close",
+    "toggle_topmost",
+];
+
+pub fn window_operation_index(operation: &str) -> usize {
+    let operation = match operation {
+        "topmost" => "toggle_topmost",
+        other => other,
+    };
+    WINDOW_OPERATION_IDS
+        .iter()
+        .position(|id| *id == operation)
+        .unwrap_or(2)
+}
+
 #[derive(Debug, Clone)]
 pub struct GestureRow {
     pub source_package: String,
@@ -79,7 +100,9 @@ pub fn join_gesture(base: &str, extra: &str) -> String {
 }
 
 pub fn gesture_label(gesture: &str) -> String {
-    let templates = glint_core::default_templates();
+    static TEMPLATES: std::sync::OnceLock<Vec<glint_core::GestureTemplate>> =
+        std::sync::OnceLock::new();
+    let templates = TEMPLATES.get_or_init(glint_core::default_templates);
     gesture
         .split('+')
         .map(|part| match part {
@@ -201,6 +224,20 @@ pub fn format_launch_args(args: &[String]) -> String {
 mod tests {
     use super::*;
     use glint_core::Package;
+
+    #[test]
+    fn window_operation_editing_preserves_every_supported_operation() {
+        for operation in WINDOW_OPERATION_IDS {
+            assert_eq!(
+                WINDOW_OPERATION_IDS[window_operation_index(operation)],
+                operation
+            );
+        }
+        assert_eq!(
+            WINDOW_OPERATION_IDS[window_operation_index("topmost")],
+            "toggle_topmost"
+        );
+    }
 
     fn package(id: &str, actions: &[(&str, &str)]) -> Package {
         Package {

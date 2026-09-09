@@ -368,11 +368,16 @@ fn run(
                 frames += 1;
                 last_paint = Instant::now();
             }
-            if SURFACE.with(|slot| {
-                slot.borrow()
-                    .as_ref()
-                    .is_some_and(|s| s.visible && presented_epoch == Some(s.epoch))
-            }) && let Err(failure) = raise_trail(window)
+            // Mouse samples can wake this loop far more often than frame submission.
+            // present() already raises new frames; only the frame timer needs to
+            // restore z-order while the cursor is stationary.
+            if message.message == WM_TIMER
+                && SURFACE.with(|slot| {
+                    slot.borrow()
+                        .as_ref()
+                        .is_some_and(|s| s.visible && presented_epoch == Some(s.epoch))
+                })
+                && let Err(failure) = raise_trail(window)
             {
                 error = Some(failure);
                 break;

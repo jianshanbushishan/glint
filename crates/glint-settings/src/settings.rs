@@ -3,8 +3,9 @@ mod view;
 use super::*;
 use crate::appearance::AppearanceExt;
 use crate::settings_model::{
-    GestureRow, action_summary, format_launch_args, gesture_label, gesture_rows, join_gesture,
-    parse_launch_args, split_gesture,
+    GestureRow, WINDOW_OPERATION_IDS as OPERATION_IDS, action_summary, format_launch_args,
+    gesture_label, gesture_rows, join_gesture, parse_launch_args, split_gesture,
+    window_operation_index,
 };
 use glint_core::{ApplicationProfile, LogLevel, LoggingConfig, Package};
 use gpui_component::{
@@ -29,15 +30,6 @@ const OPERATIONS: [&str; 7] = [
     "关闭窗口",
     "强制关闭窗口",
     "切换置顶",
-];
-const OPERATION_IDS: [&str; 7] = [
-    "minimize",
-    "maximize",
-    "toggle_maximize",
-    "restore",
-    "close",
-    "force_close",
-    "toggle_topmost",
 ];
 const EXTRAS: [&str; 8] = [
     "无",
@@ -706,10 +698,7 @@ impl SettingsView {
             ActionKind::Window { operation } => {
                 choose(
                     &self.window_operation,
-                    OPERATIONS[OPERATION_IDS
-                        .iter()
-                        .position(|id| id == operation)
-                        .unwrap_or(2)],
+                    OPERATIONS[window_operation_index(operation)],
                     window,
                     cx,
                 );

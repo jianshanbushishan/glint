@@ -14,7 +14,7 @@ use windows_sys::Win32::{
 };
 
 thread_local! {
-    static CONFIG_DIR: RefCell<PathBuf> = RefCell::new(PathBuf::new());
+    static CONFIG_DIR: RefCell<PathBuf> = const { RefCell::new(PathBuf::new()) };
 }
 
 pub(super) fn set_config_dir(dir: PathBuf) {

@@ -1,5 +1,5 @@
-use crate::recognizer::{PrefixDescriptors, PrefixTracker};
-use crate::{ActionSpec, Config, GestureTemplate, Point, recognize};
+use crate::recognizer::{PrefixDescriptors, PrefixTracker, direction_score, directions};
+use crate::{ActionSpec, Config, Point};
 use anyhow::{Context, Result};
 use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
 use std::{
@@ -11,13 +11,22 @@ pub struct Matcher {
     excluded: RegexSet,
     packages: Vec<(String, RegexSet, Vec<ActionSpec>)>,
     applications: Vec<(Regex, String, bool, bool)>,
-    templates: Vec<GestureTemplate>,
+    templates: Vec<(String, Vec<(f64, f64)>)>,
     threshold: f32,
     prefix_templates: HashMap<String, Arc<PrefixDescriptors>>,
 }
 
 impl Matcher {
     pub fn new(config: &Config) -> Result<Self> {
+        Self::build(config, true)
+    }
+
+    /// Validate rule compilation without building discarded geometry caches.
+    pub(crate) fn validate_patterns(config: &Config) -> Result<()> {
+        Self::build(config, false).map(|_| ())
+    }
+
+    fn build(config: &Config, cache_geometry: bool) -> Result<Self> {
         for (i, expression) in config.excluded.iter().enumerate() {
             RegexBuilder::new(expression)
                 .case_insensitive(true)
@@ -63,11 +72,19 @@ impl Matcher {
             excluded,
             packages,
             applications,
-            templates: config.gestures.clone(),
+            templates: config
+                .gestures
+                .iter()
+                .filter(|_| cache_geometry)
+                .filter_map(|template| {
+                    directions(&template.points).map(|descriptor| (template.id.clone(), descriptor))
+                })
+                .collect(),
             threshold: config.threshold,
             prefix_templates: config
                 .gestures
                 .iter()
+                .filter(|_| cache_geometry)
                 .map(|template| {
                     (
                         template.id.clone(),
@@ -169,8 +186,12 @@ impl Matcher {
                     .map(|_| (gesture.to_owned(), 1.0))
             });
         }
+        if !self.threshold.is_finite() || !(0.0..=1.0).contains(&self.threshold) {
+            return None;
+        }
+        let sample = directions(points)?;
         let mut seen = std::collections::HashSet::new();
-        let mut candidates = Vec::new();
+        let mut best: Option<(&str, f32)> = None;
         for actions in self.matching_packages(process) {
             let bound: std::collections::HashSet<&str> = actions
                 .iter()
@@ -182,18 +203,19 @@ impl Matcher {
                 .collect();
             // The recognizer keeps the first equal score. Package order gives application
             // bindings priority, while template order within each package remains stable.
-            candidates.extend(
-                self.templates
-                    .iter()
-                    .filter(|template| {
-                        bound.contains(template.id.as_str()) && seen.insert(template.id.as_str())
-                    })
-                    .cloned(),
-            );
+            for (id, reference) in &self.templates {
+                if bound.contains(id.as_str()) && seen.insert(id.as_str()) {
+                    let score = direction_score(&sample, reference);
+                    if score >= self.threshold && best.is_none_or(|(_, previous)| score > previous)
+                    {
+                        best = Some((id.as_str(), score));
+                    }
+                }
+            }
         }
-        recognize(points, &candidates, self.threshold).map(|(id, score)| {
+        best.map(|(id, score)| {
             (
-                suffix.map_or_else(|| id.clone(), |button| format!("{id}+{button}")),
+                suffix.map_or_else(|| id.to_owned(), |button| format!("{id}+{button}")),
                 score,
             )
         })
@@ -203,7 +225,59 @@ impl Matcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ActionKind, Package};
+    use crate::{ActionKind, GestureTemplate, Package};
+    #[test]
+    fn cached_recognition_matches_reference_scores_and_rejects_invalid_inputs() {
+        let mut config = Config::default();
+        config.packages = vec![Package {
+            id: "global".into(),
+            name: "Global".into(),
+            patterns: vec![".*".into()],
+            actions: config
+                .gestures
+                .iter()
+                .map(|t| ActionSpec {
+                    id: t.id.clone(),
+                    name: t.name.clone(),
+                    gesture: t.id.clone(),
+                    action: ActionKind::Keys {
+                        keys: "CTRL+C".into(),
+                    },
+                })
+                .collect(),
+        }];
+        for threshold in [0.0, 0.8, 1.0, f32::NAN, 1.1] {
+            config.threshold = threshold;
+            let matcher = Matcher::new(&config).unwrap();
+            let mut samples = vec![
+                vec![],
+                vec![Point::default(); 4],
+                vec![Point { x: f64::NAN, y: 0. }],
+            ];
+            for template in &config.gestures {
+                samples.push(template.points.clone());
+                samples.push(
+                    template
+                        .points
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| Point {
+                            x: p.x * 2.7 + 123.0,
+                            y: p.y * 2.7 - 50.0 + (i % 2) as f64 * 0.3,
+                        })
+                        .collect(),
+                );
+                samples.push(template.points.iter().rev().copied().collect());
+            }
+            for points in samples {
+                assert_eq!(
+                    matcher.recognize_binding("test.exe", &points, None),
+                    crate::recognize(&points, &config.gestures, threshold)
+                );
+            }
+        }
+    }
+
     #[test]
     fn prefix_scope_includes_compound_only_and_honors_inheritance_and_exclusion() {
         let mut config = Config {

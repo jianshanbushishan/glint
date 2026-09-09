@@ -93,7 +93,7 @@
 
 需要 Rust MSVC 工具链、Visual Studio 的“使用 C++ 的桌面开发”组件以及 Windows SDK。当前构建环境为 Rust 1.98。GPUI 与组件库固定为已验证的版本，提交 `Cargo.lock` 保证依赖可复现。
 
-Windows x64 构建通过 `.cargo/config.toml` 使用 Rust 工具链自带的 LLD 链接器，无需另外安装 LLVM。首次切换链接器会重新编译依赖；日常开发使用 `cargo build --workspace`，发布构建仍启用 ThinLTO。可用 `cargo build --workspace --timings` 查看各阶段耗时。
+Windows x64 构建通过 `.cargo/config.toml` 使用 Rust 工具链自带的 LLD 链接器，无需另外安装 LLVM。首次切换链接器会重新编译依赖；日常开发使用 `cargo build --workspace`。发布构建使用 `opt-level = 3`、Fat LTO、单个 codegen unit，并关闭增量编译，优先优化运行性能，代价是更长的编译时间和更高的构建内存占用。可用 `cargo build --workspace --timings` 查看各阶段耗时。
 
 ```powershell
 cargo test -p glint-core -p glint-platform -p glint-ipc -p glint

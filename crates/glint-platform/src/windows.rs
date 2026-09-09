@@ -188,10 +188,12 @@ impl Engine {
         self.capture.cancel();
         self.overlay.clear();
     }
-    fn emit(&mut self, event: PlatformEvent) {
+    fn emit(&mut self, event: PlatformEvent) -> bool {
         if self.events.try_send(event).is_err() {
             self.lost_events = self.lost_events.saturating_add(1);
+            return false;
         }
+        true
     }
     fn flush_errors(&mut self) {
         if self.lost_events != 0
@@ -243,15 +245,18 @@ impl Engine {
                     }
                     if !stroke.special && !stroke.invalid() {
                         if stroke.moved {
-                            if stroke.recording {
+                            let recording = stroke.recording;
+                            let delivered = self.emit(PlatformEvent::Gesture {
+                                points: stroke.points,
+                                context: stroke.context,
+                                recording,
+                            });
+                            // Only wait for the controller after it owns the result.
+                            // A full queue leaves recording armed so the user can retry.
+                            if recording && delivered {
                                 self.recording = false;
                                 self.recording_pending = true;
                             }
-                            self.emit(PlatformEvent::Gesture {
-                                points: stroke.points,
-                                context: stroke.context,
-                                recording: stroke.recording,
-                            });
                         } else if !stroke.recording
                             && let Err(e) = replay_click(button)
                         {
@@ -971,6 +976,55 @@ unsafe extern "system" fn tray_proc(
 #[cfg(test)]
 mod tray_tests {
     use super::*;
+    #[test]
+    #[ignore = "creates a temporary native trail window on the desktop"]
+    fn recording_queue_overflow_allows_retry_before_waiting_for_controller() {
+        let (events, received) = bounded(1);
+        let overlay = Overlay::start(events.clone()).unwrap();
+        let mut engine = Engine {
+            tray_window: null_mut(),
+            events,
+            config: Some(RuntimeConfig::new(&Config::default()).unwrap()),
+            paused: false,
+            recording: true,
+            recording_pending: false,
+            lost_events: 0,
+            capture: Capture::default(),
+            overlay,
+        };
+        engine
+            .events
+            .try_send(PlatformEvent::Error("full".into()))
+            .unwrap();
+        let data = MSLLHOOKSTRUCT {
+            pt: POINT { x: 100, y: 0 },
+            ..unsafe { zeroed() }
+        };
+        for delivered in [false, true] {
+            engine.capture.begin(
+                MouseButton::Right,
+                Point::default(),
+                GestureContext::default(),
+                true,
+            );
+            assert!(engine.handle(WM_RBUTTONUP, &data));
+            assert_eq!(engine.recording, !delivered);
+            assert_eq!(engine.recording_pending, delivered);
+            let event = received.try_recv().unwrap();
+            assert_eq!(
+                matches!(
+                    event,
+                    PlatformEvent::Gesture {
+                        recording: true,
+                        ..
+                    }
+                ),
+                delivered
+            );
+        }
+        assert_eq!(engine.lost_events, 1);
+    }
+
     #[test]
     fn pause_and_resume_choose_distinct_resources_and_status_text() {
         assert_eq!(tray_presentation(true), (2, "Glint · 已暂停鼠标手势"));

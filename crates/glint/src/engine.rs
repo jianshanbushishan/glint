@@ -59,9 +59,9 @@ struct Engine {
 }
 
 pub fn run(dir: PathBuf, no_hooks: bool) -> Result<()> {
-    initialize(&dir)?;
     // Bind first, so a second process cannot install another global mouse hook.
     let server = Server::bind(&dir)?;
+    initialize(&dir)?;
     let runtime = Arc::new(ConfigRuntime::load(&dir.join("config.json"))?);
     let config = runtime.config().clone();
     glint_core::logging::set_level(config.logging.level);

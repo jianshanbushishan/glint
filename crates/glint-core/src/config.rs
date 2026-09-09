@@ -356,6 +356,11 @@ fn validate(config: &Config) -> Result<()> {
     let mut gestures = HashSet::new();
     for template in &config.gestures {
         ensure!(
+            !crate::SPECIAL_GESTURES.contains(&template.id.as_str()),
+            "gesture id {:?} is reserved for a mouse button or wheel event",
+            template.id
+        );
+        ensure!(
             valid_id(&template.id),
             "gesture id {:?} must use 1..128 ASCII letters, digits, _ or -",
             template.id
@@ -457,7 +462,7 @@ fn validate(config: &Config) -> Result<()> {
                 .with_context(|| format!("package {:?}, action {:?}", package.id, action.id))?;
         }
     }
-    Matcher::new(config)?;
+    Matcher::validate_patterns(config)?;
     Ok(())
 }
 
@@ -754,6 +759,17 @@ mod tests {
                 .load()
                 .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn gesture_templates_cannot_shadow_direct_input_events() {
+        for id in crate::SPECIAL_GESTURES {
+            let fixture = Fixture::new(json!({"gestures":[{
+                "id":id,"name":"Reserved","points":[{"x":0,"y":0},{"x":100,"y":0}]
+            }]}));
+            let error = format!("{:#}", fixture.load().err().unwrap());
+            assert!(error.contains("reserved"), "{error}");
         }
     }
     #[test]

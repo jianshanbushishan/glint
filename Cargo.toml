@@ -21,7 +21,9 @@ glint-ipc = { path = "crates/glint-ipc" }
 debug = 0
 
 [profile.release]
-lto = "thin"
-codegen-units = 16
+# Prioritize runtime optimization over release build speed.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+incremental = false
 strip = "debuginfo"
-

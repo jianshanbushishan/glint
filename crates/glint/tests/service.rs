@@ -152,9 +152,18 @@ fn application_scopes_persist_atomically_without_flattening_base_config() {
         "Editor"
     );
     // A real filesystem write failure must likewise leave the live snapshot untouched.
-    std::fs::create_dir(dir.path().join("overrides.tmp")).unwrap();
-    assert!(!call(dir.path(), apply(&app, vec![], vec![])).ok);
-    std::fs::remove_dir(dir.path().join("overrides.tmp")).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Permit config reads but deny replacement, independent of temp-file naming.
+        let locked = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1) // FILE_SHARE_READ, without FILE_SHARE_DELETE
+            .open(&sidecar_path)
+            .unwrap();
+        assert!(!call(dir.path(), apply(&app, vec![], vec![])).ok);
+        drop(locked);
+    }
     assert_eq!(std::fs::read(&sidecar_path).unwrap(), saved);
     assert_eq!(
         call(dir.path(), Command::GetConfig)

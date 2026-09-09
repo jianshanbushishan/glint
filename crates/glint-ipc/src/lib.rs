@@ -126,19 +126,74 @@ pub fn validate_template_id(id: &str) -> anyhow::Result<()> {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
         "手势 ID 仅支持英文字母、数字、短横线和下划线（1–80 字符）"
     );
+    anyhow::ensure!(
+        !glint_core::SPECIAL_GESTURES.contains(&id),
+        "手势 ID 不能使用鼠标按钮或滚轮事件的保留名称"
+    );
     Ok(())
 }
 
 pub fn write_atomic(path: &Path, data: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    // Each writer owns a unique file on the destination volume. NamedTempFile
+    // removes it on failure. Close the handle before replacing on Windows so
+    // another writer can immediately replace the destination as well.
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
     use std::io::Write;
-    let mut file = std::fs::File::create(&tmp)?;
     file.write_all(data)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, path)?;
+    file.as_file().sync_all()?;
+    let temporary = file.into_temp_path();
+    std::fs::rename(&temporary, path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_ids_reject_reserved_input_events() {
+        for id in glint_core::SPECIAL_GESTURES {
+            assert!(validate_template_id(id).is_err(), "{id}");
+        }
+        assert!(validate_template_id("recorded_left").is_ok());
+    }
+
+    #[test]
+    fn concurrent_atomic_writers_publish_complete_files_and_clean_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for byte in b'a'..=b'h' {
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let payload = vec![byte; 64 * 1024];
+                    barrier.wait();
+                    for _ in 0..8 {
+                        write_atomic(path, &payload).unwrap();
+                        let published = std::fs::read(path).unwrap();
+                        assert_eq!(published.len(), payload.len());
+                        assert!(published.iter().all(|&value| value == published[0]));
+                    }
+                });
+            }
+        });
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_atomic_replace_removes_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("directory");
+        std::fs::create_dir(&destination).unwrap();
+        assert!(write_atomic(&destination, b"data").is_err());
+        assert!(destination.is_dir());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }
