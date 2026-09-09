@@ -2,7 +2,7 @@ use super::*;
 use gpui_component::{Icon, IconName};
 
 impl SettingsView {
-    fn modal_open(&self) -> bool {
+    pub(super) fn modal_open(&self) -> bool {
         self.app_dialog.is_some() || self.recording.is_some()
     }
 
@@ -167,63 +167,208 @@ impl SettingsView {
     }
 
     fn render_heading(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut heading = v_flex()
-            .gap_1()
-            .px_6()
-            .pt_5()
-            .pb_4()
-            .flex_shrink_0()
-            .when(!matches!(self.page, Page::General), |el| {
-                el.border_b_1().border_color(rgb(self.palette.border))
-            })
-            .child(
-                div()
-                    .text_xl()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(self.page_title()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(self.palette.muted))
-                    .truncate()
-                    .child(self.page_description()),
-            );
-        if let Some(application) = self.application() {
+        let application = self.application();
+        let icon = match &self.page {
+            Page::General => IconName::Settings2,
+            Page::Scope(id) if id == "global" => IconName::Globe,
+            _ => IconName::LayoutDashboard,
+        };
+        let mut heading = v_flex().gap_3().px_6().pt_5().pb_4().flex_shrink_0().child(
+            h_flex()
+                .gap_3()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .size(px(40.))
+                                .flex_shrink_0()
+                                .rounded_lg()
+                                .bg(rgb(self.palette.bg))
+                                .border_1()
+                                .border_color(rgb(self.palette.border))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    Icon::new(icon)
+                                        .size(px(21.))
+                                        .text_color(rgb(self.palette.accent)),
+                                ),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .text_xl()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(self.page_title()),
+                                )
+                                .child(self.muted(if application.is_some() {
+                                    "应用专属手势".to_owned()
+                                } else {
+                                    self.page_description()
+                                })),
+                        ),
+                )
+                .when(
+                    self.current_scope().is_some_and(|id| id != "global"),
+                    |el| {
+                        el.child(
+                            Button::new("delete-application-gestures")
+                                .ghost()
+                                .small()
+                                .icon(Icon::default().path("icons/glint-trash.svg"))
+                                .tooltip("删除应用手势")
+                                .text_color(rgb(self.palette.error))
+                                .disabled(self.controls_blocked())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.remove_application(window, cx)
+                                })),
+                        )
+                    },
+                ),
+        );
+        if let Some(application) = application {
             heading = heading.child(
                 h_flex()
-                    .mt_3()
-                    .gap_4()
-                    .flex_wrap()
+                    .gap_3()
                     .child(
-                        Switch::new("disable-application")
-                            .label("在此应用中禁用手势")
-                            .checked(application.disabled)
-                            .disabled(self.controls_blocked())
-                            .on_click(cx.listener(|this, checked, _, cx| {
-                                this.set_application_disabled(*checked, cx)
-                            })),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(rgb(self.palette.muted))
+                            .child(application.process_path.clone()),
                     )
                     .child(
-                        Select::new(&self.fallback)
-                            .cleanable(false)
-                            .w(px(225.))
-                            .disabled(self.controls_blocked() || application.disabled),
+                        Button::new("change-application-program")
+                            .outline()
+                            .small()
+                            .icon(IconName::FolderOpen)
+                            .label("更改应用程序")
+                            .disabled(self.controls_blocked())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.change_application_program(window, cx)
+                            })),
                     ),
             );
-            if application.disabled {
-                heading = heading.child(
-                    div()
-                        .pt_2()
-                        .text_xs()
-                        .text_color(rgb(self.palette.error))
-                        .child(if self.current_scope().and_then(|scope| self.scope_drafts.get(scope)).is_some_and(|draft| draft.dirty) {
-                            "应用设置后生效：此应用内将不再识别或拦截手势，保留全部配置以便恢复。"
-                        } else {
-                            "此应用内不识别或拦截手势，保留全部配置以便恢复。"
-                        }),
+            let mut settings = v_flex()
+                .rounded_lg()
+                .border_1()
+                .border_color(rgb(self.palette.border))
+                .child(
+                    h_flex()
+                        .p_3()
+                        .gap_3()
+                        .justify_between()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .flex_1()
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child("在此应用中启用手势"),
+                                )
+                                .child(self.muted(if application.disabled {
+                                    "已停用 · 不识别或拦截手势，已有配置保留"
+                                } else {
+                                    "已启用 · 在此应用中识别手势"
+                                })),
+                        )
+                        .child(
+                            Switch::new("enable-application")
+                                .checked(!application.disabled)
+                                .disabled(self.controls_blocked())
+                                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                    this.set_application_disabled(!*checked, cx)
+                                })),
+                        ),
+                );
+            if !application.disabled {
+                let mut options = h_flex().gap_2().flex_wrap();
+                for (id, title, description, inherit) in [
+                    (
+                        "fallback-global",
+                        "使用全局配置",
+                        "未单独配置时，执行对应的全局动作",
+                        true,
+                    ),
+                    (
+                        "fallback-ignore",
+                        "不执行",
+                        "只使用此应用单独配置的手势",
+                        false,
+                    ),
+                ] {
+                    let active = application.inherit_global == inherit;
+                    options =
+                        options.child(
+                            Button::new(id)
+                                .outline()
+                                .h_auto()
+                                .flex_1()
+                                .min_w(px(180.))
+                                .p_3()
+                                .disabled(self.controls_blocked())
+                                .when(active, |el| {
+                                    el.bg(rgb(self.palette.selected))
+                                        .border_color(rgb(self.palette.accent))
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_start()
+                                        .child(
+                                            Icon::new(if active {
+                                                IconName::CircleCheck
+                                            } else {
+                                                IconName::Minus
+                                            })
+                                            .size(px(16.))
+                                            .text_color(rgb(if active {
+                                                self.palette.accent
+                                            } else {
+                                                self.palette.muted
+                                            })),
+                                        )
+                                        .child(
+                                            v_flex()
+                                                .gap_1()
+                                                .items_start()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child(title),
+                                                )
+                                                .child(self.muted(description)),
+                                        ),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.set_application_fallback(inherit, window, cx)
+                                })),
+                        );
+                }
+                settings = settings.child(
+                    v_flex()
+                        .p_3()
+                        .gap_2()
+                        .bg(rgb(self.palette.bg))
+                        .border_t_1()
+                        .border_color(rgb(self.palette.border))
+                        .child(div().text_sm().child("未单独配置的手势"))
+                        .child(self.muted("已为此应用单独配置的手势始终优先生效。"))
+                        .child(options),
                 );
             }
+            heading = heading.child(settings);
         }
         heading.into_any_element()
     }
@@ -509,6 +654,41 @@ impl SettingsView {
                             ),
                         ),
                     )
+                    .child(
+                        self.settings_section(
+                            "启动",
+                            self.settings_card().child(
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .gap_3()
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child("开机自动启动"),
+                                            )
+                                            .child(
+                                                self.muted(
+                                                    "登录 Windows 后在后台运行，切换立即保存",
+                                                ),
+                                            ),
+                                    )
+                                    .child(
+                                        Switch::new("launch-at-startup")
+                                            .checked(self.autostart_enabled)
+                                            .disabled(
+                                                !self.autostart_available || self.modal_open(),
+                                            )
+                                            .on_click(cx.listener(|this, checked, _, cx| {
+                                                this.set_autostart(*checked, cx)
+                                            })),
+                                    ),
+                            ),
+                        ),
+                    )
                     .child(self.settings_section("手势轨迹", trail))
                     .child(logs)
                     .child(
@@ -603,8 +783,8 @@ impl SettingsView {
                             .gap_3()
                             .child(
                                 div()
-                                    .w(px(58.))
-                                    .h(px(48.))
+                                    .w(px(42.))
+                                    .h(px(44.))
                                     .flex_shrink_0()
                                     .overflow_hidden()
                                     .rounded_md()
@@ -627,8 +807,8 @@ impl SettingsView {
                                                 el.child(
                                                     div()
                                                         .text_xs()
-                                                        .text_color(rgb(self.palette.accent))
-                                                        .child("继承全局"),
+                                                        .text_color(rgb(self.palette.muted))
+                                                        .child("全局"),
                                                 )
                                             }),
                                     )
@@ -646,35 +826,54 @@ impl SettingsView {
             );
         }
         v_flex()
-            .w(relative(0.44))
+            .w(px(265.))
+            .max_w(relative(0.42))
             .min_w(px(210.))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
             .border_color(rgb(self.palette.border))
             .child(
-                h_flex()
+                v_flex()
                     .gap_2()
                     .p_4()
                     .flex_shrink_0()
-                    .border_b_1()
-                    .border_color(rgb(self.palette.border))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .child(format!("手势 · {}", self.rows(cx).len())),
+                            )
+                            .child(
+                                Button::new("new-gesture")
+                                    .outline()
+                                    .small()
+                                    .icon(IconName::Plus)
+                                    .label("新建")
+                                    .disabled(disabled)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.new_action(window, cx)
+                                    })),
+                            ),
+                    )
                     .child(
                         Input::new(&self.inputs["search"])
                             .disabled(self.modal_open())
-                            .flex_1()
+                            .w_full()
                             .min_w_0(),
                     )
-                    .child(
-                        Button::new("new-gesture")
-                            .outline()
-                            .small()
-                            .label("＋ 新建")
-                            .disabled(disabled)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.new_action(window, cx)),
-                            ),
-                    ),
+                    .when(self.application().is_some(), |el| {
+                        el.child(self.muted(
+                            if self.application().is_some_and(|app| app.inherit_global) {
+                                "全局手势与应用专属手势"
+                            } else {
+                                "仅显示应用专属手势"
+                            },
+                        ))
+                    }),
             )
             .child(
                 div()
@@ -690,13 +889,13 @@ impl SettingsView {
     fn editable_field(&self, key: &'static str, label: &'static str, disabled: bool) -> AnyElement {
         v_flex()
             .gap_2()
-            .child(label)
+            .child(self.muted(label))
             .child(Input::new(&self.inputs[key]).disabled(disabled))
             .into_any_element()
     }
 
     fn render_editor(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut editor = v_flex().gap_5().p_4();
+        let mut editor = v_flex().gap_4().p_5();
         let Some(selected) = &self.selected else {
             return div()
                 .id("gesture-editor-scroll")
@@ -704,207 +903,330 @@ impl SettingsView {
                 .min_w_0()
                 .min_h_0()
                 .overflow_y_scroll()
-                .child(editor.child(self.muted("选择一个手势查看和编辑，或新建手势。")))
+                .child(editor.child(self.muted("选择一个手势查看，或新建手势。")))
                 .into_any_element();
         };
         let editable = self.is_editable() && !self.modal_open();
+        let overridden = self.current_scope() != Some("global")
+            && self.application().is_none_or(|app| app.inherit_global)
+            && self.effective_config().packages.iter().any(|p| {
+                p.id == "global"
+                    && p.actions
+                        .iter()
+                        .any(|a| a.gesture == selected.action.gesture)
+            });
+        editor = editor
+            .child(
+                h_flex()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(self.value("action_name", cx)),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(self.palette.bg))
+                            .text_xs()
+                            .text_color(rgb(self.palette.muted))
+                            .child(if selected.inherited {
+                                "继承全局"
+                            } else if self.current_scope() == Some("global") {
+                                "全局"
+                            } else {
+                                "应用专属"
+                            }),
+                    ),
+            )
+            .child(self.muted(if self.current_scope() == Some("global") {
+                "作为所有应用的默认配置".to_owned()
+            } else {
+                format!("仅在 {} 中生效", self.page_title())
+            }));
+        if selected.inherited {
+            // Inherited bindings are a summary; customization opens the same editor as a new binding.
+            editor = editor.child(
+                v_flex()
+                    .gap_3()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(rgb(self.palette.bg))
+                    .child(self.muted("当前使用全局动作。为此应用自定义后，可独立编辑。"))
+                    .child(
+                        h_flex().child(
+                            Button::new("customize-gesture")
+                                .outline()
+                                .small()
+                                .label("为此应用自定义")
+                                .disabled(self.controls_blocked())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.customize_action(window, cx)
+                                })),
+                        ),
+                    ),
+            );
+        }
+        let new_binding = !self.config.as_ref().is_some_and(|config| {
+            config.packages.iter().any(|p| {
+                p.id == selected.source_package
+                    && p.actions.iter().any(|a| a.id == selected.action.id)
+            })
+        });
         editor = editor.child(
-            h_flex()
-                .justify_between()
+            v_flex()
                 .gap_3()
-                .child(div().text_lg().font_weight(FontWeight::MEDIUM).child(
-                    if selected.inherited {
-                        "全局手势"
-                    } else {
-                        "编辑手势"
-                    },
-                ))
-                .when(!selected.inherited, |el| {
-                    el.child(
-                        Button::new("delete-gesture")
-                            .outline()
-                            .small()
-                            .label(
-                                if self.current_scope() != Some("global")
-                                    && self.config.as_ref().is_some_and(|config| {
-                                        config.packages.iter().any(|package| {
-                                            package.id == "global"
-                                                && package.actions.iter().any(|action| {
-                                                    action.gesture == selected.action.gesture
-                                                })
-                                        })
-                                    })
-                                {
-                                    "恢复全局"
+                .p_4()
+                .rounded_lg()
+                .bg(rgb(self.palette.bg))
+                .border_1()
+                .border_color(rgb(self.palette.border))
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .child(
+                            div()
+                                .w(px(76.))
+                                .h(px(80.))
+                                .flex_shrink_0()
+                                .rounded_md()
+                                .bg(rgb(self.palette.panel))
+                                .overflow_hidden()
+                                .child(self.gesture_preview(&self.editor_gesture)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(self.muted(if selected.inherited {
+                                    "执行动作"
                                 } else {
-                                    "删除绑定"
-                                },
-                            )
-                            .disabled(!editable)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.remove_action(window, cx)),
+                                    "手势轨迹"
+                                }))
+                                .when(selected.inherited, |el| {
+                                    el.child(div().child(action_summary(&selected.action.action)))
+                                })
+                                .when(!selected.inherited, |el| {
+                                    el.child(
+                                        Button::new("record-gesture")
+                                            .outline()
+                                            .small()
+                                            .label("更换手势")
+                                            .disabled(!editable)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.begin_recording(cx)
+                                            })),
+                                    )
+                                }),
+                        ),
+                )
+                .when(new_binding && !selected.inherited, |el| {
+                    el.child(
+                        v_flex()
+                            .gap_2()
+                            .child(self.muted("选择已有手势，或录制新的轨迹"))
+                            .child(
+                                Select::new(&self.template)
+                                    .cleanable(false)
+                                    .w_full()
+                                    .disabled(!editable),
                             ),
                     )
                 }),
         );
         if selected.inherited {
-            editor =
-                editor.child(
-                    v_flex()
-                        .gap_3()
-                        .p_3()
-                        .rounded_md()
-                        .bg(rgb(self.palette.bg))
-                        .child(self.muted("此手势继承全局配置。可为当前应用创建独立动作。"))
-                        .child(
-                            Button::new("customize-gesture")
-                                .outline()
-                                .small()
-                                .label("为此应用自定义")
-                                .disabled(
-                                    self.controls_blocked()
-                                        || self.application().is_some_and(|app| app.disabled),
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.customize_action(window, cx)
-                                })),
-                        ),
-                );
-        }
-        editor =
-            editor
+            editor = editor.child(
+                h_flex()
+                    .justify_between()
+                    .gap_2()
+                    .child(self.muted("附加输入"))
+                    .child(self.muted(chosen(&self.extra, cx))),
+            );
+        } else {
+            editor = editor
                 .child(self.editable_field("action_name", "名称", !editable))
                 .child(
-                    v_flex()
-                        .gap_2()
-                        .child("手势")
-                        .child(
-                            h_flex()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .w(px(70.))
-                                        .h(px(52.))
-                                        .flex_shrink_0()
-                                        .rounded_md()
-                                        .bg(rgb(self.palette.bg))
-                                        .border_1()
-                                        .border_color(rgb(self.palette.border))
-                                        .overflow_hidden()
-                                        .child(self.gesture_preview(&self.editor_gesture)),
-                                )
-                                .child(
-                                    Button::new("record-gesture")
-                                        .outline()
-                                        .small()
-                                        .label("更换手势")
-                                        .disabled(!editable)
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.begin_recording(cx)),
-                                        ),
-                                ),
-                        )
-                        .when(
-                            !self.config.as_ref().is_some_and(|config| {
-                                config.packages.iter().any(|package| {
-                                    package.id == selected.source_package
-                                        && package
-                                            .actions
-                                            .iter()
-                                            .any(|action| action.id == selected.action.id)
-                                })
-                            }),
-                            |el| {
-                                el.child(
-                                    Select::new(&self.template)
-                                        .cleanable(false)
-                                        .w_full()
-                                        .disabled(!editable),
-                                )
-                            },
-                        ),
-                )
-                .child(v_flex().gap_2().child("附加输入").child(
-                    Select::new(&self.extra).cleanable(false).w_full().disabled(
-                        !editable
-                            || glint_core::SPECIAL_GESTURES.contains(
-                                &self.editor_gesture.split('+').next().unwrap_or_default(),
-                            ),
-                    ),
-                ))
-                .child(div().h(px(1.)).bg(rgb(self.palette.border)))
-                .child(
-                    v_flex().gap_2().child("动作类型").child(
+                    v_flex().gap_2().child(self.muted("动作类型")).child(
                         Select::new(&self.action_type)
                             .cleanable(false)
                             .w_full()
                             .disabled(!editable),
                     ),
                 );
-        match self.selected_type(cx) {
-            "keys" => {
-                editor = editor.child(
-                    v_flex()
-                        .gap_2()
-                        .child("快捷键")
-                        .child(
-                            Input::new(&self.inputs["action_value"])
-                                .disabled(!editable || self.recording_shortcut),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("record-shortcut")
-                                        .outline()
-                                        .small()
-                                        .label(if self.recording_shortcut {
-                                            "请按下快捷键…"
-                                        } else {
-                                            "录入快捷键"
-                                        })
-                                        .disabled(!editable || self.recording_shortcut)
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.begin_shortcut(cx)),
-                                        ),
-                                )
-                                .when(self.recording_shortcut, |el| {
-                                    el.child(self.muted("Esc 取消"))
-                                }),
-                        ),
-                );
-            }
-            "window" => {
-                editor = editor.child(
-                    v_flex().gap_2().child("窗口操作").child(
-                        Select::new(&self.window_operation)
-                            .cleanable(false)
-                            .w_full()
-                            .disabled(!editable),
-                    ),
-                );
-            }
-            "launch" => {
-                editor = editor
-                    .child(
+            match self.selected_type(cx) {
+                "keys" => {
+                    editor = editor.child(
                         v_flex()
                             .gap_2()
-                            .child("程序路径")
-                            .child(Input::new(&self.inputs["action_value"]).disabled(!editable))
+                            .child(self.muted("快捷键"))
                             .child(
-                                Button::new("pick-action-program")
-                                    .outline()
-                                    .small()
-                                    .label("选择程序…")
-                                    .disabled(!editable)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.pick_program(false, window, cx)
-                                    })),
-                            ),
-                    )
-                    .child(self.editable_field("action_args", "启动参数（可选）", !editable));
+                                h_flex()
+                                    .gap_2()
+                                    .flex_wrap()
+                                    .child(
+                                        Input::new(&self.inputs["action_value"])
+                                            .flex_1()
+                                            .min_w(px(140.))
+                                            .disabled(!editable || self.recording_shortcut),
+                                    )
+                                    .child(
+                                        Button::new("record-shortcut")
+                                            .outline()
+                                            .small()
+                                            .label(if self.recording_shortcut {
+                                                "录入中…"
+                                            } else {
+                                                "录入快捷键"
+                                            })
+                                            .disabled(!editable || self.recording_shortcut)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.begin_shortcut(cx)
+                                            })),
+                                    ),
+                            )
+                            .when(self.recording_shortcut, |el| {
+                                el.child(
+                                    v_flex()
+                                        .gap_3()
+                                        .p_3()
+                                        .rounded_md()
+                                        .bg(rgb(self.palette.selected))
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(rgb(self.palette.accent))
+                                                .child(
+                                                    self.shortcut_candidate
+                                                        .as_ref()
+                                                        .map(|value| {
+                                                            format!(
+                                                                "已录入：{value} · 可再次按键替换"
+                                                            )
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            "请按下组合键，Esc 取消".into()
+                                                        }),
+                                                ),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(
+                                                    Button::new("accept-shortcut")
+                                                        .primary()
+                                                        .small()
+                                                        .label("使用此快捷键")
+                                                        .disabled(self.shortcut_candidate.is_none())
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.accept_shortcut(window, cx)
+                                                            },
+                                                        )),
+                                                )
+                                                .child(
+                                                    Button::new("cancel-shortcut")
+                                                        .outline()
+                                                        .small()
+                                                        .label("取消")
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.cancel_shortcut(cx)
+                                                        })),
+                                                ),
+                                        ),
+                                )
+                            }),
+                    );
+                }
+                "window" => {
+                    editor = editor.child(
+                        v_flex().gap_2().child(self.muted("窗口动作")).child(
+                            Select::new(&self.window_operation)
+                                .cleanable(false)
+                                .w_full()
+                                .disabled(!editable),
+                        ),
+                    );
+                }
+                "launch" => {
+                    editor = editor
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(self.muted("程序路径"))
+                                .child(Input::new(&self.inputs["action_value"]).disabled(!editable))
+                                .child(
+                                    h_flex().child(
+                                        Button::new("pick-action-program")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::FolderOpen)
+                                            .label("选择程序…")
+                                            .disabled(!editable)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.pick_program(false, window, cx)
+                                            })),
+                                    ),
+                                ),
+                        )
+                        .child(self.editable_field("action_args", "启动参数（可选）", !editable));
+                }
+                _ => {}
             }
-            _ => {}
+            editor = editor.child(
+                v_flex()
+                    .gap_3()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(rgb(self.palette.border))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                Button::new("toggle-extra")
+                                    .ghost()
+                                    .small()
+                                    .icon(if self.extra_expanded {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    })
+                                    .label("附加输入")
+                                    .disabled(self.modal_open())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.extra_expanded = !this.extra_expanded;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(self.muted(chosen(&self.extra, cx))),
+                    )
+                    .when(self.extra_expanded, |el| {
+                        el.child(Select::new(&self.extra).cleanable(false).w_full().disabled(
+                            !editable
+                                || glint_core::SPECIAL_GESTURES.contains(
+                                    &self.editor_gesture.split('+').next().unwrap_or_default(),
+                                ),
+                        ))
+                    }),
+            );
+            editor = editor.child(
+                h_flex().child(
+                    Button::new("delete-gesture")
+                        .ghost()
+                        .small()
+                        .label(if overridden {
+                            "恢复为全局配置"
+                        } else {
+                            "删除绑定"
+                        })
+                        .disabled(!editable)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.remove_action(window, cx)),
+                        ),
+                ),
+            );
         }
         div()
             .id("gesture-editor-scroll")
@@ -962,29 +1284,14 @@ impl SettingsView {
                     ),
             )
             .child(
-                h_flex()
-                    .gap_2()
-                    .flex_shrink_0()
-                    .when(self.application().is_some(), |el| {
-                        el.child(
-                            Button::new("manage-application")
-                                .outline()
-                                .small()
-                                .label("管理应用")
-                                .disabled(self.controls_blocked())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_app_dialog(false, window, cx)
-                                })),
-                        )
-                    })
-                    .child(
-                        Button::new("apply-settings")
-                            .small()
-                            .primary()
-                            .label("应用设置")
-                            .disabled(self.controls_blocked() || !changed)
-                            .on_click(cx.listener(|this, _, _, cx| this.save_current(cx))),
-                    ),
+                h_flex().gap_2().flex_shrink_0().child(
+                    Button::new("apply-settings")
+                        .small()
+                        .primary()
+                        .label("应用设置")
+                        .disabled(self.controls_blocked() || !changed)
+                        .on_click(cx.listener(|this, _, _, cx| this.save_current(cx))),
+                ),
             )
             .into_any_element()
     }
@@ -1202,6 +1509,8 @@ impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = if matches!(self.page, Page::General) {
             self.render_general(window, cx)
+        } else if self.application().is_some_and(|app| app.disabled) {
+            div().flex_1().into_any_element()
         } else {
             div()
                 .flex()
@@ -1209,6 +1518,8 @@ impl Render for SettingsView {
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
+                .border_t_1()
+                .border_color(rgb(self.palette.border))
                 .child(self.render_gesture_list(cx))
                 .child(self.render_editor(cx))
                 .into_any_element()

@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "glint"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2119,7 +2119,7 @@ dependencies = [
 
 [[package]]
 name = "glint-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "glint-ipc"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "glint-core",
@@ -2144,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "glint-platform"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -2157,12 +2157,13 @@ dependencies = [
 
 [[package]]
 name = "glint-settings"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "embed-resource",
  "glint-core",
  "glint-ipc",
+ "glint-platform",
  "gpui",
  "gpui-component",
  "gpui-component-assets",

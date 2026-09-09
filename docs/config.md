@@ -4,6 +4,8 @@
 
 ## 基础配置与动作
 
+开机自动启动在“常规 → 启动”中设置，默认关闭，切换立即保存，无需点击“应用设置”。此选项保存在当前用户的 Windows 启动项（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值名 `Glint`），不写入 JSON，也不需要管理员权限。启动项指向同目录的 `glint.exe` 并携带当前配置目录；每个 Windows 用户只有一个 Glint 启动项。移动程序或更换配置目录后，请重新开启开关以更新路径；删除程序前可先关闭开关。
+
 ```json
 {
   "version": 1,

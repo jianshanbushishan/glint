@@ -55,6 +55,87 @@ fn start_service(dir: &Path) -> Service {
 }
 
 #[test]
+fn deleting_legacy_application_removes_all_bindings_and_preserves_other_scopes() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(binary(dir.path()).arg("init").status().unwrap().success());
+    let source = r#"{"packages":[
+        {"id":"global","name":"Global","match":[".*"],"actions":[
+            {"id":"copy","name":"Copy","gesture":"left","action":{"type":"keys","keys":"CTRL+C"}}
+        ]},
+        {"id":"editor","name":"Editor","match":["editor"],"actions":[
+            {"id":"local_left","name":"Left","gesture":"left","action":{"type":"keys","keys":"ALT+LEFT"}},
+            {"id":"local_right","name":"Right","gesture":"right","action":{"type":"keys","keys":"ALT+RIGHT"}}
+        ]},
+        {"id":"browser","name":"Browser","match":["browser"],"actions":[]}
+    ]}"#;
+    std::fs::write(dir.path().join("config.json"), source).unwrap();
+    let service = start_service(dir.path());
+    assert!(
+        call(
+            dir.path(),
+            Command::ApplyScope {
+                package_id: "editor".into(),
+                application: None,
+                upsert_actions: vec![ActionSpec {
+                    id: "extra".into(),
+                    name: "Extra".into(),
+                    gesture: "up".into(),
+                    action: ActionKind::Keys {
+                        keys: "CTRL+V".into()
+                    },
+                }],
+                remove_actions: vec!["local_right".into()],
+            }
+        )
+        .ok
+    );
+    assert!(
+        !call(
+            dir.path(),
+            Command::RemoveApplication {
+                package_id: "global".into()
+            }
+        )
+        .ok
+    );
+    let response = call(
+        dir.path(),
+        Command::RemoveApplication {
+            package_id: "editor".into(),
+        },
+    );
+    assert!(response.ok, "{}", response.message);
+    drop(service);
+    let _service = start_service(dir.path());
+    let config = call(dir.path(), Command::GetConfig).config.unwrap();
+    assert_eq!(
+        config
+            .packages
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<Vec<_>>(),
+        ["global", "browser"]
+    );
+    assert_eq!(
+        Matcher::new(&config)
+            .unwrap()
+            .match_action("editor", "left")
+            .unwrap()
+            .id,
+        "copy"
+    );
+    let overrides: glint_core::ConfigOverrides =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("overrides.json")).unwrap())
+            .unwrap();
+    assert!(overrides.action_overrides.is_empty());
+    assert!(overrides.removed_actions.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.json")).unwrap(),
+        source
+    );
+}
+
+#[test]
 fn application_scopes_persist_atomically_without_flattening_base_config() {
     let dir = tempfile::tempdir().unwrap();
     assert!(binary(dir.path()).arg("init").status().unwrap().success());

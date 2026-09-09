@@ -80,6 +80,8 @@ struct RecordingDraft {
 
 pub(super) struct SettingsView {
     ui_settings: UiSettings,
+    autostart_enabled: bool,
+    autostart_available: bool,
     palette: Palette,
     page: Page,
     dir: PathBuf,
@@ -99,6 +101,7 @@ pub(super) struct SettingsView {
     action_type: Choice,
     window_operation: Choice,
     extra: Choice,
+    extra_expanded: bool,
     fallback: Choice,
     template: Entity<SelectState<Vec<String>>>,
     template_ids: Vec<String>,
@@ -119,8 +122,10 @@ pub(super) struct SettingsView {
     logs_expanded: bool,
     preview_invalid: bool,
     app_dialog: Option<AppDialog>,
+    application_pick_generation: Option<String>,
     recording: Option<RecordingDraft>,
     recording_shortcut: bool,
+    shortcut_candidate: Option<String>,
     cancel_recording_queued: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -159,6 +164,21 @@ impl SettingsView {
             Ok(settings) => (settings, None),
             Err(error) => (UiSettings::default(), Some(error)),
         };
+        let autostart = if cfg!(windows) && !smoke_test {
+            std::env::current_exe()
+                .map_err(anyhow::Error::from)
+                .and_then(|exe| {
+                    glint_platform::autostart::is_enabled(&exe.with_file_name("glint.exe"), &dir)
+                })
+        } else {
+            Ok(false)
+        };
+        let settings_error = settings_error.or_else(|| {
+            autostart
+                .as_ref()
+                .err()
+                .map(|error| format!("无法读取开机启动设置：{error:#}"))
+        });
         let palette = ui_settings.appearance.apply(window, cx);
         let (tx, rx) = start_worker(dir.clone(), smoke_test);
         if !smoke_test {
@@ -242,6 +262,10 @@ impl SettingsView {
                 window,
                 |this, _, event: &SelectEvent<Vec<&'static str>>, _, cx| {
                     if matches!(event, SelectEvent::Confirm(_)) && !this.loading {
+                        if this.selected_type(cx) != "keys" {
+                            this.recording_shortcut = false;
+                            this.shortcut_candidate = None;
+                        }
                         this.editor_dirty = true;
                         cx.notify();
                     }
@@ -275,18 +299,7 @@ impl SettingsView {
                 if let SelectEvent::Confirm(Some(value)) = event
                     && !this.loading
                 {
-                    if !this.stash_editor(cx) {
-                        this.sync_fallback(window, cx);
-                        return;
-                    }
-                    if let Some(mut application) = this.application() {
-                        application.inherit_global = *value == FALLBACKS[0];
-                        let draft = this.scope_drafts.entry(application.id.clone()).or_default();
-                        draft.application = Some(application);
-                        draft.dirty = true;
-                        this.select_first(window, cx);
-                        cx.notify();
-                    }
+                    this.set_application_fallback(*value == FALLBACKS[0], window, cx);
                 }
             },
         ));
@@ -337,17 +350,13 @@ impl SettingsView {
                     && !key.modifiers.shift
                     && !key.modifiers.platform
                 {
-                    this.recording_shortcut = false;
-                    this.notice = "已取消快捷键录入".into();
-                    cx.notify();
+                    this.cancel_shortcut(cx);
                     return;
                 }
                 match shortcut_string(key) {
                     Ok(value) => {
-                        this.set("action_value", value, window, cx);
-                        this.editor_dirty = true;
-                        this.recording_shortcut = false;
-                        this.notice = "快捷键已录入，点击右下角应用设置生效".into();
+                        this.shortcut_candidate = Some(value);
+                        this.notice = "请确认快捷键，或继续按键重新录入；Esc 取消".into();
                     }
                     Err(error) => this.error(error, cx),
                 }
@@ -405,6 +414,8 @@ impl SettingsView {
         .detach();
         Self {
             ui_settings,
+            autostart_enabled: autostart.unwrap_or(false),
+            autostart_available: cfg!(windows) && !smoke_test,
             palette,
             page: Page::General,
             dir,
@@ -431,6 +442,7 @@ impl SettingsView {
             action_type,
             window_operation,
             extra,
+            extra_expanded: false,
             fallback,
             template,
             template_ids: Vec::new(),
@@ -451,8 +463,10 @@ impl SettingsView {
             logs_expanded: false,
             preview_invalid: false,
             app_dialog: None,
+            application_pick_generation: None,
             recording: None,
             recording_shortcut: false,
+            shortcut_candidate: None,
             cancel_recording_queued: false,
             _subscriptions: subscriptions,
         }
@@ -546,7 +560,7 @@ impl SettingsView {
                 .scope_tabs()
                 .into_iter()
                 .find(|t| &t.0 == id)
-                .map(|t| format!("{} 手势", t.1))
+                .map(|t| t.1)
                 .unwrap_or_else(|| "应用手势".into()),
         }
     }
@@ -600,8 +614,27 @@ impl SettingsView {
     }
     fn rows(&self, cx: &App) -> Vec<GestureRow> {
         let search = self.value("search", cx).to_lowercase();
-        self.all_rows()
-            .into_iter()
+        let mut rows = self.all_rows();
+        if self.editor_dirty
+            && let Some(selected) = &self.selected
+            && !selected.inherited
+            && self.current_scope() == Some(selected.source_package.as_str())
+            && !rows.iter().any(|row| row.action.id == selected.action.id)
+        {
+            let mut draft = selected.clone();
+            if let Ok(action) = self.editor_action(cx) {
+                draft.action = action;
+            } else {
+                draft.action.name = self.value("action_name", cx).to_string();
+                let extra = EXTRA_IDS[EXTRAS
+                    .iter()
+                    .position(|value| *value == chosen(&self.extra, cx))
+                    .unwrap_or(0)];
+                draft.action.gesture = join_gesture(&self.editor_gesture, extra);
+            }
+            rows.insert(0, draft);
+        }
+        rows.into_iter()
             .filter(|r| {
                 search.is_empty()
                     || format!(
@@ -624,6 +657,7 @@ impl SettingsView {
     fn has_pending_changes(&self) -> bool {
         self.general_dirty
             || self.editor_dirty
+            || self.shortcut_candidate.is_some()
             || self.scope_drafts.values().any(|d| d.dirty)
             || self.app_dialog.is_some()
     }
@@ -650,11 +684,33 @@ impl SettingsView {
         );
         self.loading = false;
     }
+    fn set_application_fallback(
+        &mut self,
+        inherit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected || self.pending || !self.stash_editor(cx) {
+            self.sync_fallback(window, cx);
+            return;
+        }
+        if let Some(mut application) = self.application() {
+            application.inherit_global = inherit;
+            let draft = self.scope_drafts.entry(application.id.clone()).or_default();
+            draft.application = Some(application);
+            draft.dirty = true;
+            self.sync_fallback(window, cx);
+            self.select_first(window, cx);
+            cx.notify();
+        }
+    }
     fn select_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending || self.recording.is_some() || !self.stash_editor(cx) {
             return;
         }
         self.recording_shortcut = false;
+        self.shortcut_candidate = None;
+        self.application_pick_generation = None;
         self.page = page;
         self.set("search", "", window, cx);
         self.sync_fallback(window, cx);
@@ -663,6 +719,8 @@ impl SettingsView {
     }
     fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor_dirty = false;
+        self.recording_shortcut = false;
+        self.shortcut_candidate = None;
         if let Some(row) = self.all_rows().into_iter().next() {
             self.load_row(row, window, cx);
         } else {
@@ -685,6 +743,7 @@ impl SettingsView {
     fn load_row(&mut self, row: GestureRow, window: &mut Window, cx: &mut Context<Self>) {
         self.loading = true;
         self.recording_shortcut = false;
+        self.shortcut_candidate = None;
         self.set("action_name", row.action.name.clone(), window, cx);
         let (base, extra) = split_gesture(&row.action.gesture);
         self.editor_gesture = base;
@@ -809,6 +868,10 @@ impl SettingsView {
         })
     }
     fn stash_editor(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.recording_shortcut {
+            self.error("请先确认或取消快捷键录入", cx);
+            return false;
+        }
         if !self.editor_dirty {
             return true;
         }
@@ -883,6 +946,9 @@ impl SettingsView {
         cx.notify();
     }
     fn customize_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.connected || self.pending || self.application().is_some_and(|a| a.disabled) {
+            return;
+        }
         let Some(mut row) = self.selected.clone() else {
             return;
         };
@@ -906,10 +972,11 @@ impl SettingsView {
         let scope = self.current_scope().unwrap_or("global").to_owned();
         let weak = cx.entity().downgrade();
         let restoring = scope != "global"
-            && self.config.as_ref().is_some_and(|c| {
-                c.packages.iter().any(|p| {
-                    p.id == "global" && p.actions.iter().any(|a| a.gesture == row.action.gesture)
-                })
+            && self
+                .application()
+                .is_none_or(|application| application.inherit_global)
+            && self.effective_config().packages.iter().any(|p| {
+                p.id == "global" && p.actions.iter().any(|a| a.gesture == row.action.gesture)
             });
         let label = if restoring {
             "恢复全局"
@@ -956,16 +1023,31 @@ impl SettingsView {
         });
     }
     fn begin_shortcut(&mut self, cx: &mut Context<Self>) {
-        if !self.is_editable() {
+        if !self.is_editable() || self.selected_type(cx) != "keys" {
             return;
         }
-        self.recording_shortcut = !self.recording_shortcut;
-        self.notice = if self.recording_shortcut {
-            "请按下快捷键；Esc 取消录入"
-        } else {
-            "已取消快捷键录入"
+        self.recording_shortcut = true;
+        self.shortcut_candidate = None;
+        self.notice = "请按下快捷键；Esc 取消录入".into();
+        cx.notify();
+    }
+    fn accept_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_editable() || self.selected_type(cx) != "keys" || !self.recording_shortcut {
+            return;
         }
-        .into();
+        let Some(value) = self.shortcut_candidate.take() else {
+            return;
+        };
+        self.recording_shortcut = false;
+        self.set("action_value", value, window, cx);
+        self.editor_dirty = true;
+        self.notice = "快捷键已录入，点击右下角应用设置生效".into();
+        cx.notify();
+    }
+    fn cancel_shortcut(&mut self, cx: &mut Context<Self>) {
+        self.recording_shortcut = false;
+        self.shortcut_candidate = None;
+        self.notice = "已取消快捷键录入".into();
         cx.notify();
     }
     fn begin_recording(&mut self, cx: &mut Context<Self>) {
@@ -978,6 +1060,7 @@ impl SettingsView {
             ready: false,
         });
         self.recording_shortcut = false;
+        self.shortcut_candidate = None;
         self.send(
             Command::Record {
                 id,
@@ -1106,6 +1189,90 @@ impl SettingsView {
         self.notice = "应用配置已暂存，点击右下角应用设置生效".into();
         cx.notify();
     }
+    fn change_application_program(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.connected || self.pending || !self.stash_editor(cx) {
+            return;
+        }
+        let Some(original) = self.application() else {
+            return;
+        };
+        let generation = fresh_id("application-picker");
+        self.application_pick_generation = Some(generation.clone());
+        let pick = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("更改应用程序".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = pick.await
+                && let Some(path) = paths.first()
+            {
+                let path = path.clone();
+                let _ = this.update_in(cx, |this, _, cx| {
+                    if !this.connected
+                        || this.pending
+                        || this.application_pick_generation.as_ref() != Some(&generation)
+                        || this.current_scope() != Some(original.id.as_str())
+                    {
+                        return;
+                    }
+                    this.application_pick_generation = None;
+                    let Some(mut application) = this.application() else {
+                        return;
+                    };
+                    if application.process_path != original.process_path {
+                        return;
+                    }
+                    if !path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+                    {
+                        this.error("请选择 .exe 程序", cx);
+                        return;
+                    }
+                    let normalized =
+                        match glint_core::normalize_application_path(&path.display().to_string()) {
+                            Ok(path) => path,
+                            Err(error) => {
+                                this.error(error.to_string(), cx);
+                                return;
+                            }
+                        };
+                    let mut applications = this
+                        .config
+                        .as_ref()
+                        .map(|config| config.applications.clone())
+                        .unwrap_or_default();
+                    for draft in this.scope_drafts.values() {
+                        if let Some(app) = &draft.application {
+                            applications.retain(|existing| existing.id != app.id);
+                            applications.push(app.clone());
+                        }
+                    }
+                    if applications.iter().any(|app| {
+                        app.id != application.id
+                            && app.process_path.eq_ignore_ascii_case(&normalized)
+                    }) {
+                        this.error("此程序已有专属配置，请选择已有的应用标签", cx);
+                        return;
+                    }
+                    application.process_path = normalized;
+                    application.name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    let draft = this.scope_drafts.entry(application.id.clone()).or_default();
+                    draft.application = Some(application);
+                    draft.dirty = true;
+                    this.notice = "应用路径已暂存，点击右下角应用设置生效".into();
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
     fn pick_program(&mut self, for_application: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending {
             return;
@@ -1221,20 +1388,29 @@ impl SettingsView {
         .detach();
     }
     fn remove_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(application) = self.application() else {
+        if self.pending || !self.connected {
+            return;
+        }
+        let Some(id) = self
+            .current_scope()
+            .filter(|id| *id != "global")
+            .map(str::to_owned)
+        else {
             return;
         };
+        let name = self.page_title();
         let weak = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
-            let id = application.id.clone();
+            let id = id.clone();
             dialog
-                .title("移除应用配置")
-                .child("移除此应用的专属绑定和禁用规则，恢复使用全局手势。")
+                .title("删除应用手势")
+                .child(format!("确定删除“{name}”的全部专属绑定和应用规则？该应用未应用的修改也会丢弃。删除立即生效，之后按全局规则处理手势。"))
                 .confirm()
                 .button_props(
                     DialogButtonProps::default()
-                        .ok_text("移除")
+                        .ok_text("删除")
+                        .ok_variant(gpui_component::button::ButtonVariant::Danger)
                         .cancel_text("取消"),
                 )
                 .on_ok(move |_, window, cx| {
@@ -1243,7 +1419,7 @@ impl SettingsView {
                         if this
                             .config
                             .as_ref()
-                            .is_some_and(|c| c.applications.iter().any(|a| a.id == id))
+                            .is_some_and(|c| c.packages.iter().any(|p| p.id == id))
                         {
                             this.send(
                                 Command::RemoveApplication {
@@ -1256,6 +1432,8 @@ impl SettingsView {
                             this.editor_dirty = false;
                             this.page = Page::Scope("global".into());
                             this.select_first(window, cx);
+                            this.is_error = false;
+                            this.notice = "已删除应用手势".into();
                             cx.notify();
                         }
                     });
@@ -1269,6 +1447,8 @@ impl SettingsView {
         }
         if let Some(mut application) = self.application() {
             application.disabled = disabled;
+            self.recording_shortcut = false;
+            self.shortcut_candidate = None;
             let draft = self.scope_drafts.entry(application.id.clone()).or_default();
             draft.application = Some(application);
             draft.dirty = true;
@@ -1354,6 +1534,35 @@ impl SettingsView {
             );
         }
     }
+    fn set_autostart(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if !self.autostart_available || self.modal_open() {
+            return;
+        }
+        let result = std::env::current_exe()
+            .map_err(anyhow::Error::from)
+            .and_then(|exe| {
+                glint_platform::autostart::set_enabled(
+                    &exe.with_file_name("glint.exe"),
+                    &self.dir,
+                    enabled,
+                )
+            });
+        match result {
+            Ok(()) => {
+                self.autostart_enabled = enabled;
+                self.is_error = false;
+                self.notice = if enabled {
+                    "已开启开机自动启动，下次登录 Windows 时生效"
+                } else {
+                    "已关闭开机自动启动"
+                }
+                .into();
+            }
+            Err(error) => self.error(format!("无法保存开机启动设置：{error:#}"), cx),
+        }
+        cx.notify();
+    }
+
     fn set_appearance(
         &mut self,
         appearance: Appearance,

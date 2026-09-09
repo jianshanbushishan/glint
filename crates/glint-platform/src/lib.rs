@@ -1,4 +1,6 @@
 //! Windows integration, independent of the settings UI.
+pub mod autostart;
+
 use glint_core::{GestureContext, Point};
 
 #[derive(Debug, Clone)]

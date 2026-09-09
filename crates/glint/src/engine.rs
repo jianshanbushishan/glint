@@ -483,10 +483,12 @@ impl Engine {
             }
             Command::RemoveApplication { package_id } => {
                 ensure!(
-                    self.config
-                        .applications
-                        .iter()
-                        .any(|app| app.id == package_id),
+                    package_id != "global"
+                        && self
+                            .config
+                            .packages
+                            .iter()
+                            .any(|package| package.id == package_id),
                     "应用不存在"
                 );
                 let mut overrides = self.overrides()?;
@@ -504,6 +506,7 @@ impl Engine {
                     .removed_actions
                     .retain(|a| a.package_id != package_id);
                 self.update_file("overrides.json", &serde_json::to_vec_pretty(&overrides)?)?;
+                response.message = "已删除应用手势".into();
                 response.config = Some(self.config.clone());
             }
             Command::Quit => {

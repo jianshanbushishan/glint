@@ -19,6 +19,26 @@ use gpui_component::{
     v_flex,
 };
 use gpui_component_assets::Assets;
+struct SettingsAssets;
+
+impl AssetSource for SettingsAssets {
+    fn load(&self, path: &str) -> anyhow::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if path == "icons/glint-trash.svg" {
+            return Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../assets/trash.svg"
+            ))));
+        }
+        Assets.load(path)
+    }
+
+    fn list(&self, path: &str) -> anyhow::Result<Vec<SharedString>> {
+        let mut assets = Assets.list(path)?;
+        if "icons/glint-trash.svg".starts_with(path) {
+            assets.push("icons/glint-trash.svg".into());
+        }
+        Ok(assets)
+    }
+}
 use settings::SettingsView;
 use std::{
     collections::HashMap,
@@ -366,47 +386,49 @@ fn main() {
     if let Err(error) = glint_core::logging::init(&dir, "glint-settings.log") {
         eprintln!("无法初始化设置日志：{error}");
     }
-    Application::new().with_assets(Assets).run(move |cx| {
-        gpui_component::init(cx);
-        if smoke_test {
-            cx.spawn(async |cx| {
-                smol::Timer::after(Duration::from_secs(3)).await;
-                let _ = cx.update(|cx| {
-                    for handle in cx.windows() {
-                        let _ = handle.update(cx, |_, window, _| window.remove_window());
-                    }
-                });
+    Application::new()
+        .with_assets(SettingsAssets)
+        .run(move |cx| {
+            gpui_component::init(cx);
+            if smoke_test {
+                cx.spawn(async |cx| {
+                    smol::Timer::after(Duration::from_secs(3)).await;
+                    let _ = cx.update(|cx| {
+                        for handle in cx.windows() {
+                            let _ = handle.update(cx, |_, window, _| window.remove_window());
+                        }
+                    });
+                })
+                .detach();
+            }
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
             })
             .detach();
-        }
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(840.), px(608.)), cx)),
-            window_min_size: Some(size(px(680.), px(496.))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Glint · 设置".into()),
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1000.), px(740.)), cx)),
+                window_min_size: Some(size(px(680.), px(496.))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Glint · 设置".into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
-        match cx.open_window(options, |window, cx| {
-            #[cfg(windows)]
-            if let Err(error) = disable_maximize_button(window) {
-                log::warn!("无法禁用最大化按钮：{error}");
+            };
+            match cx.open_window(options, |window, cx| {
+                #[cfg(windows)]
+                if let Err(error) = disable_maximize_button(window) {
+                    log::warn!("无法禁用最大化按钮：{error}");
+                }
+                let view = cx.new(|cx| SettingsView::new(dir, smoke_test, window, cx));
+                cx.new(|cx| Root::new(view, window, cx))
+            }) {
+                Ok(_) => cx.activate(true),
+                Err(error) => {
+                    log::error!("无法打开设置窗口：{error}");
+                    cx.quit();
+                }
             }
-            let view = cx.new(|cx| SettingsView::new(dir, smoke_test, window, cx));
-            cx.new(|cx| Root::new(view, window, cx))
-        }) {
-            Ok(_) => cx.activate(true),
-            Err(error) => {
-                log::error!("无法打开设置窗口：{error}");
-                cx.quit();
-            }
-        }
-    });
+        });
 }
