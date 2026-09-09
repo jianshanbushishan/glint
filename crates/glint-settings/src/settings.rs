@@ -116,10 +116,11 @@ pub(super) struct SettingsView {
     pending: bool,
     refresh_selection: bool,
     preference_tools: bool,
+    logs_expanded: bool,
+    preview_invalid: bool,
     app_dialog: Option<AppDialog>,
     recording: Option<RecordingDraft>,
     recording_shortcut: bool,
-    capture_target: Option<String>,
     cancel_recording_queued: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -447,10 +448,11 @@ impl SettingsView {
             pending: false,
             refresh_selection: false,
             preference_tools: false,
+            logs_expanded: false,
+            preview_invalid: false,
             app_dialog: None,
             recording: None,
             recording_shortcut: false,
-            capture_target: None,
             cancel_recording_queued: false,
             _subscriptions: subscriptions,
         }
@@ -481,7 +483,6 @@ impl SettingsView {
             return;
         }
         self.notice = match &command {
-            Command::CaptureWindow { .. } => "请在 3 秒内将鼠标移到目标窗口…",
             Command::Record { .. } => "请按住触发键绘制新手势…",
             _ => "正在处理…",
         }
@@ -539,7 +540,7 @@ impl SettingsView {
     }
     fn page_title(&self) -> String {
         match &self.page {
-            Page::General => "常规配置".into(),
+            Page::General => "常规设置".into(),
             Page::Scope(id) if id == "global" => "全局手势".into(),
             Page::Scope(id) => self
                 .scope_tabs()
@@ -551,7 +552,7 @@ impl SettingsView {
     }
     fn page_description(&self) -> String {
         if matches!(self.page, Page::General) {
-            "调整操作方式与外观".into()
+            "让每一次手势，都更顺手。".into()
         } else if let Some(app) = self.application() {
             app.process_path
         } else if self.current_scope() == Some("global") {
@@ -1157,12 +1158,67 @@ impl SettingsView {
         })
         .detach();
     }
-    fn capture_application(&mut self, cx: &mut Context<Self>) {
+    fn capture_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending || self.app_dialog.is_none() {
             return;
         }
-        self.capture_target = self.app_dialog.as_ref().map(|d| d.generation.clone());
-        self.send(Command::CaptureWindow { delay_ms: 3000 }, cx);
+        #[cfg(windows)]
+        let hwnd = {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
+                Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get(),
+                _ => {
+                    self.error("无法获取设置窗口句柄", cx);
+                    return;
+                }
+            }
+        };
+        #[cfg(not(windows))]
+        let hwnd = 0;
+        let generation = self
+            .app_dialog
+            .as_ref()
+            .map(|dialog| dialog.generation.clone());
+        self.pending = true;
+        self.is_error = false;
+        self.notice = "请点击目标窗口，按 Esc 取消（60 秒后自动取消）".into();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = smol::unblock(move || crate::window_picker::pick_window(hwnd)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if this.app_dialog.as_ref().map(|dialog| &dialog.generation) != generation.as_ref()
+                {
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(Some(context)) => {
+                        this.set(
+                            "app_name",
+                            Path::new(&context.process)
+                                .file_stem()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned(),
+                            window,
+                            cx,
+                        );
+                        this.set("app_path", context.process, window, cx);
+                        this.is_error = false;
+                        this.notice = "已拾取应用，请确认应用配置".into();
+                    }
+                    Ok(None) => {
+                        this.is_error = false;
+                        this.notice = "已取消窗口拾取".into();
+                    }
+                    Err(error) => this.error(format!("窗口拾取失败：{error:#}"), cx),
+                }
+                window.activate_window();
+                cx.notify();
+            });
+        })
+        .detach();
     }
     fn remove_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(application) = self.application() else {
@@ -1356,19 +1412,28 @@ impl SettingsView {
         let pen = self.pen(cx);
         div()
             .w_full()
-            .h(px((pen.width * 3. + 4.).max(76.)))
+            .h(px((pen.width * 3. + 60.).max(90.)))
             .opacity(pen.opacity)
             .child(preview(
                 GestureTemplate {
                     id: String::new(),
                     name: String::new(),
                     points: vec![
-                        glint_core::Point { x: 0., y: 0. },
+                        glint_core::Point { x: 0., y: 50. },
+                        glint_core::Point { x: 45., y: 50. },
                         glint_core::Point { x: 100., y: 0. },
                     ],
                 },
-                u32::from_str_radix(pen.color.trim_start_matches('#'), 16)
-                    .unwrap_or(self.palette.accent),
+                u32::from_str_radix(
+                    if self.preview_invalid {
+                        &pen.invalid_color
+                    } else {
+                        &pen.color
+                    }
+                    .trim_start_matches('#'),
+                    16,
+                )
+                .unwrap_or(self.palette.accent),
                 pen.width,
                 true,
             ))
@@ -1515,23 +1580,6 @@ impl SettingsView {
                             self.refresh_selection = false;
                             self.sync_fallback(window, cx);
                         }
-                    }
-                    if let Some(context) = response.context
-                        && self.app_dialog.as_ref().map(|d| &d.generation)
-                            == self.capture_target.as_ref()
-                        && self.capture_target.take().is_some()
-                    {
-                        self.set(
-                            "app_name",
-                            Path::new(&context.process)
-                                .file_stem()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .into_owned(),
-                            window,
-                            cx,
-                        );
-                        self.set("app_path", context.process, window, cx);
                     }
                 }
             }

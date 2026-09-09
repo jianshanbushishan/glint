@@ -35,6 +35,14 @@ try {
         $hwnd = [SettingsWindowTest]::FindWindow($process.Id)
     } while ($hwnd -eq [IntPtr]::Zero -and !$process.HasExited -and [DateTime]::UtcNow -lt $deadline)
     if ($hwnd -eq [IntPtr]::Zero) { throw 'Settings window not found' }
+    # The HWND is enumerable before GPUI finishes the open-window callback that
+    # installs the caption restrictions. Wait for that initialization to settle.
+    do {
+        $style = [SettingsWindowTest]::GetWindowLongW($hwnd, -16)
+        if (!($style -band 0x10000)) { break }
+        Start-Sleep -Milliseconds 30
+        $process.Refresh()
+    } while (!$process.HasExited -and [DateTime]::UtcNow -lt $deadline)
     $style = [SettingsWindowTest]::GetWindowLongW($hwnd, -16)
     if ($style -band 0x10000) { throw 'Maximize button is enabled' }
     if (!($style -band 0x40000)) { throw 'Window resizing was disabled' }

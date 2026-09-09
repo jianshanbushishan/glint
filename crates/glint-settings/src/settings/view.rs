@@ -15,7 +15,7 @@ impl SettingsView {
         for (id, label, page) in [
             (
                 "nav-general".to_owned(),
-                "常规配置".to_owned(),
+                "常规设置".to_owned(),
                 Page::General,
             ),
             (
@@ -45,7 +45,8 @@ impl SettingsView {
         }
         navigation = navigation.child(
             Button::new("add-application")
-                .outline()
+                .ghost()
+                .small()
                 .label("＋ 添加应用")
                 .w_full()
                 .disabled(self.controls_blocked())
@@ -63,6 +64,29 @@ impl SettingsView {
             .px_2()
             .py_4()
             .child(
+                h_flex()
+                    .px_3()
+                    .pb_6()
+                    .gap_2()
+                    .child(
+                        div()
+                            .size(px(28.))
+                            .rounded_md()
+                            .bg(rgb(self.palette.accent))
+                            .text_color(rgb(self.palette.panel))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(Icon::new(IconName::Redo2).size(px(16.))),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Glint"),
+                    ),
+            )
+            .child(
                 div()
                     .id("settings-navigation")
                     .flex_1()
@@ -76,7 +100,7 @@ impl SettingsView {
                     .pt_5()
                     .text_xs()
                     .text_color(rgb(self.palette.muted))
-                    .child(concat!("v", env!("CARGO_PKG_VERSION"))),
+                    .child(concat!("Glint · v", env!("CARGO_PKG_VERSION"))),
             )
             .into_any_element()
     }
@@ -94,7 +118,7 @@ impl SettingsView {
             _ => false,
         };
         let icon = match &page {
-            Page::General => IconName::Settings,
+            Page::General => IconName::Settings2,
             Page::Scope(scope) if scope == "global" => IconName::Globe,
             Page::Scope(_) => IconName::LayoutDashboard,
         };
@@ -129,12 +153,10 @@ impl SettingsView {
             .child(
                 v_flex()
                     .w_full()
-                    .items_center()
                     .gap_1()
                     .child(
                         h_flex()
                             .w_full()
-                            .justify_center()
                             .gap_2()
                             .child(Icon::new(icon).size(px(16.)).flex_shrink_0())
                             .child(div().min_w_0().truncate().child(label)),
@@ -151,8 +173,9 @@ impl SettingsView {
             .pt_5()
             .pb_4()
             .flex_shrink_0()
-            .border_b_1()
-            .border_color(rgb(self.palette.border))
+            .when(!matches!(self.page, Page::General), |el| {
+                el.border_b_1().border_color(rgb(self.palette.border))
+            })
             .child(
                 div()
                     .text_xl()
@@ -213,22 +236,34 @@ impl SettingsView {
             .into_any_element()
     }
 
-    fn section(&self, title: &'static str) -> Div {
+    fn settings_card(&self) -> Div {
         v_flex()
+            .w_full()
+            .min_w_0()
+            .p_4()
             .gap_4()
-            .py_5()
-            .border_b_1()
+            .rounded_lg()
+            .bg(rgb(self.palette.panel))
+            .border_1()
             .border_color(rgb(self.palette.border))
-            .child(div().font_weight(FontWeight::MEDIUM).child(title))
     }
 
-    fn render_general(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn settings_section(&self, title: &'static str, content: impl IntoElement) -> Div {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(self.muted(title))
+            .child(content)
+    }
+
+    fn render_general(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let disabled = self.controls_blocked();
+        let narrow = window.viewport_size().width < px(740.);
         let mut themes = h_flex()
             .gap_1()
             .p_1()
-            .border_1()
-            .border_color(rgb(self.palette.border))
+            .flex_shrink_0()
+            .bg(rgb(self.palette.bg))
             .rounded_md();
         for (id, label, appearance) in [
             ("theme-system", "跟随系统", Appearance::System),
@@ -239,95 +274,177 @@ impl SettingsView {
                 Button::new(id)
                     .disabled(self.modal_open())
                     .small()
-                    .outline()
+                    .ghost()
                     .label(label)
                     .when(self.ui_settings.appearance == appearance, |button| {
-                        button.primary()
+                        button
+                            .bg(rgb(self.palette.panel))
+                            .text_color(rgb(self.palette.accent))
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.set_appearance(appearance, window, cx)
                     })),
             );
         }
-        let width = self.pen_width.read(cx).value().start();
-        let opacity = self.pen_opacity.read(cx).value().start();
-        let trail = h_flex()
-            .items_start()
-            .gap_6()
+        let mut colors = h_flex().gap_5().flex_wrap();
+        for (id, label, state) in [
+            ("disabled-pen-color", "正常颜色", &self.pen_color),
+            (
+                "disabled-pen-invalid-color",
+                "无效颜色",
+                &self.pen_invalid_color,
+            ),
+        ] {
+            colors = colors.child(
+                h_flex()
+                    .gap_2()
+                    .child(if disabled {
+                        div()
+                            .id(id)
+                            .size(px(24.))
+                            .rounded_md()
+                            .bg(state
+                                .read(cx)
+                                .value()
+                                .unwrap_or_else(|| rgb(self.palette.muted).into()))
+                            .opacity(0.5)
+                            .into_any_element()
+                    } else {
+                        ColorPicker::new(state).small().into_any_element()
+                    })
+                    .child(self.muted(label)),
+            );
+        }
+        let mut parameters = v_flex().flex_1().min_w(px(220.)).gap_4().child(colors);
+        for (label, state, value) in [
+            (
+                "线宽",
+                &self.pen_width,
+                format!("{:.0} px", self.pen_width.read(cx).value().start()),
+            ),
+            (
+                "不透明度",
+                &self.pen_opacity,
+                format!("{:.0}%", self.pen_opacity.read(cx).value().start()),
+            ),
+        ] {
+            parameters = parameters.child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_xs().child(label))
+                            .child(self.muted(value)),
+                    )
+                    .child(Slider::new(state).w_full().disabled(disabled)),
+            );
+        }
+        let mut preview_modes = h_flex().justify_center().gap_1();
+        for (id, label, invalid) in [
+            ("preview-normal", "正常轨迹", false),
+            ("preview-invalid", "无效轨迹", true),
+        ] {
+            preview_modes = preview_modes.child(
+                Button::new(id)
+                    .ghost()
+                    .small()
+                    .label(label)
+                    .disabled(self.modal_open())
+                    .when(self.preview_invalid == invalid, |button| {
+                        button.text_color(rgb(self.palette.accent))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.preview_invalid = invalid;
+                        cx.notify();
+                    })),
+            );
+        }
+        let trail = self
+            .settings_card()
             .child(
                 v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(div().w(px(70.)).flex_shrink_0().child("正常颜色"))
-                            .child(if disabled {
-                                Button::new("disabled-pen-color")
-                                    .outline()
-                                    .label("选择颜色")
-                                    .disabled(true)
-                                    .into_any_element()
-                            } else {
-                                ColorPicker::new(&self.pen_color)
-                                    .label("选择颜色")
-                                    .into_any_element()
-                            })
-                            .child(div().flex_shrink_0().child("无效颜色"))
-                            .child(if disabled {
-                                Button::new("disabled-pen-invalid-color")
-                                    .outline()
-                                    .label("选择颜色")
-                                    .disabled(true)
-                                    .into_any_element()
-                            } else {
-                                ColorPicker::new(&self.pen_invalid_color)
-                                    .label("选择颜色")
-                                    .into_any_element()
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(div().w(px(70.)).flex_shrink_0().child("线宽"))
-                            .child(Slider::new(&self.pen_width).flex_1().disabled(disabled))
-                            .child(
-                                div()
-                                    .w(px(48.))
-                                    .text_xs()
-                                    .text_color(rgb(self.palette.muted))
-                                    .child(format!("{width:.0} px")),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(div().w(px(70.)).flex_shrink_0().child("不透明度"))
-                            .child(Slider::new(&self.pen_opacity).flex_1().disabled(disabled))
-                            .child(
-                                div()
-                                    .w(px(48.))
-                                    .text_xs()
-                                    .text_color(rgb(self.palette.muted))
-                                    .child(format!("{opacity:.0}%")),
-                            ),
-                    ),
+                    .gap_1()
+                    .child(div().font_weight(FontWeight::MEDIUM).child("轨迹样式"))
+                    .child(self.muted("调整绘制效果，同步预览")),
             )
             .child(
-                v_flex()
-                    .w(px(180.))
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_2()
-                    .p_3()
-                    .rounded_md()
-                    .bg(rgb(self.palette.bg))
-                    .border_1()
-                    .border_color(rgb(self.palette.border))
-                    .child(self.pen_preview(cx))
-                    .child(self.muted("实时预览")),
+                h_flex()
+                    .items_start()
+                    .flex_wrap()
+                    .gap_5()
+                    .child(parameters)
+                    .child(
+                        v_flex()
+                            .w(px(200.))
+                            .when(narrow, |el| el.w_full())
+                            .flex_shrink_0()
+                            .p_3()
+                            .gap_2()
+                            .rounded_md()
+                            .bg(rgb(self.palette.bg))
+                            .border_1()
+                            .border_color(rgb(self.palette.border))
+                            .child(self.muted("实时预览"))
+                            .child(self.pen_preview(cx))
+                            .child(preview_modes),
+                    ),
             );
+
+        let logs = self
+            .settings_card()
+            .child(
+                Button::new("toggle-logs")
+                    .ghost()
+                    .small()
+                    .disabled(self.modal_open())
+                    .label(if self.logs_expanded {
+                        "▾ 日志"
+                    } else {
+                        "▸ 日志"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.logs_expanded = !this.logs_expanded;
+                        cx.notify();
+                    })),
+            )
+            .when(self.logs_expanded, |el| {
+                el.child(
+                    h_flex()
+                        .justify_between()
+                        .flex_wrap()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .flex_1()
+                                .min_w(px(180.))
+                                .child("日志级别")
+                                .child(self.muted(
+                                    "默认 info；debug 记录执行的动作，日志保存到配置目录。",
+                                )),
+                        )
+                        .child(
+                            div().w(px(150.)).h(px(32.)).flex_shrink_0().child(
+                                Select::new(&self.log_level)
+                                    .cleanable(false)
+                                    .w_full()
+                                    .disabled(disabled),
+                            ),
+                        ),
+                )
+                .child(
+                    h_flex().child(
+                        Button::new("open-log")
+                            .outline()
+                            .small()
+                            .disabled(self.modal_open())
+                            .label("打开日志")
+                            .on_click(cx.listener(|this, _, _, cx| this.open_log(cx))),
+                    ),
+                )
+            });
+
         div()
             .id("general-scroll")
             .flex_1()
@@ -336,105 +453,112 @@ impl SettingsView {
             .px_6()
             .pb_5()
             .child(
-                self.section("操作方式").child(
-                    h_flex()
-                        .justify_between()
-                        .gap_5()
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .child("手势触发键")
-                                .child(self.muted("按住绘制，松开执行")),
-                        )
-                        .child(
-                            Select::new(&self.trigger)
-                                .cleanable(false)
-                                .w(px(200.))
-                                .disabled(disabled),
-                        ),
-                ),
-            )
-            .child(
-                self.section("外观").child(
-                    h_flex()
-                        .justify_between()
-                        .gap_5()
-                        .child("界面主题")
-                        .child(themes),
-                ),
-            )
-            .child(self.section("手势轨迹").child(trail))
-            .child(
-                self.section("日志").child(
-                    h_flex()
-                        .justify_between()
-                        .gap_5()
-                        .child(v_flex().gap_1().child("日志级别").child(
-                            self.muted("默认 info；debug 记录执行的动作，日志保存到配置目录。"),
-                        ))
-                        .child(
-                            Select::new(&self.log_level)
-                                .cleanable(false)
-                                .w(px(200.))
-                                .disabled(disabled),
-                        ),
-                ),
-            )
-            .child(
                 v_flex()
-                    .gap_3()
-                    .pt_3()
+                    .w_full()
+                    .gap_4()
                     .child(
-                        Button::new("advanced-settings")
-                            .disabled(self.modal_open())
-                            .outline()
-                            .small()
-                            .label(if self.preference_tools {
-                                "▾ 高级"
-                            } else {
-                                "▸ 高级"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.preference_tools = !this.preference_tools;
-                                cx.notify();
-                            })),
-                    )
-                    .when(self.preference_tools, |el| {
-                        el.child(self.muted("识别参数和过滤规则可在 config.json 中调整。"))
-                            .child(
+                        self.settings_section(
+                            "操作",
+                            self.settings_card().child(
                                 h_flex()
-                                    .gap_2()
+                                    .w_full()
+                                    .justify_between()
+                                    .flex_wrap()
+                                    .gap_3()
                                     .child(
-                                        Button::new("open-config")
-                                            .outline()
-                                            .disabled(self.modal_open())
-                                            .small()
-                                            .label("打开配置目录")
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.open_config(cx)),
-                                            ),
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child("手势触发键"),
+                                            )
+                                            .child(self.muted("按住绘制，松开执行")),
                                     )
                                     .child(
-                                        Button::new("reload-config")
-                                            .outline()
-                                            .small()
-                                            .label("重新加载配置")
-                                            .disabled(disabled)
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.reload(cx)),
-                                            ),
+                                        div().w(px(160.)).h(px(32.)).flex_shrink_0().child(
+                                            Select::new(&self.trigger)
+                                                .cleanable(false)
+                                                .w_full()
+                                                .disabled(disabled),
+                                        ),
                                     ),
-                            )
-                    })
-                    .child(
-                        h_flex().child(
-                            Button::new("open-log")
-                                .outline()
-                                .disabled(self.modal_open())
-                                .small()
-                                .label("打开日志")
-                                .on_click(cx.listener(|this, _, _, cx| this.open_log(cx))),
+                            ),
                         ),
+                    )
+                    .child(
+                        self.settings_section(
+                            "外观",
+                            self.settings_card().child(
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .flex_wrap()
+                                    .gap_3()
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child("界面主题"),
+                                            )
+                                            .child(self.muted("选择你习惯的明暗风格")),
+                                    )
+                                    .child(themes),
+                            ),
+                        ),
+                    )
+                    .child(self.settings_section("手势轨迹", trail))
+                    .child(logs)
+                    .child(
+                        v_flex()
+                            .gap_3()
+                            .child(
+                                h_flex().child(
+                                    Button::new("advanced-settings")
+                                        .disabled(self.modal_open())
+                                        .ghost()
+                                        .small()
+                                        .label(if self.preference_tools {
+                                            "▾ 高级"
+                                        } else {
+                                            "▸ 高级"
+                                        })
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.preference_tools = !this.preference_tools;
+                                            cx.notify();
+                                        })),
+                                ),
+                            )
+                            .when(self.preference_tools, |el| {
+                                el.child(self.muted("识别参数和过滤规则可在 config.json 中调整。"))
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .flex_wrap()
+                                            .child(
+                                                Button::new("open-config")
+                                                    .outline()
+                                                    .small()
+                                                    .disabled(self.modal_open())
+                                                    .label("打开配置目录")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.open_config(cx)
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("reload-config")
+                                                    .outline()
+                                                    .small()
+                                                    .disabled(disabled)
+                                                    .label("重新加载配置")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.reload(cx)
+                                                    })),
+                                            ),
+                                    )
+                            }),
                     ),
             )
             .into_any_element()
@@ -819,18 +943,23 @@ impl SettingsView {
                     } else {
                         "后台未连接"
                     }))
-                    .when(!self.notice.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(if self.is_error {
-                                    self.palette.error
-                                } else {
-                                    self.palette.muted
-                                }))
-                                .child(self.notice.clone()),
-                        )
-                    }),
+                    .when(
+                        !self.notice.is_empty()
+                            && (self.is_error
+                                || !matches!(self.notice.as_str(), "完成" | "主题已保存")),
+                        |el| {
+                            el.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(if self.is_error {
+                                        self.palette.error
+                                    } else {
+                                        self.palette.muted
+                                    }))
+                                    .child(self.notice.clone()),
+                            )
+                        },
+                    ),
             )
             .child(
                 h_flex()
@@ -906,8 +1035,9 @@ impl SettingsView {
                                         .disabled(self.pending)
                                         .small()
                                         .label("拾取窗口")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.capture_application(cx)
+                                        .tooltip("隐藏设置后，左键点击目标窗口；按 Esc 取消")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.capture_application(window, cx)
                                         })),
                                 ),
                         )
@@ -1071,7 +1201,7 @@ impl SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = if matches!(self.page, Page::General) {
-            self.render_general(cx)
+            self.render_general(window, cx)
         } else {
             div()
                 .flex()
@@ -1099,6 +1229,9 @@ impl Render for SettingsView {
                             .flex_1()
                             .min_w_0()
                             .h_full()
+                            .when(matches!(self.page, Page::General), |el| {
+                                el.bg(rgb(self.palette.bg))
+                            })
                             .child(self.render_heading(cx))
                             .child(content)
                             .child(self.render_footer(cx)),

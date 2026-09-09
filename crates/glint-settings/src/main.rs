@@ -5,6 +5,7 @@ mod engine_process;
 mod preview_path;
 mod settings;
 mod settings_model;
+mod window_picker;
 use appearance::{Appearance, Palette, UiSettings};
 use glint_core::{ActionKind, ActionSpec, Config, GestureTemplate, MouseButton, PenConfig};
 use glint_ipc::{Command, Response, Status};

@@ -36,26 +36,26 @@ impl AppearanceExt for Appearance {
         window.defer(cx, move |window, _| update_titlebar(window, dark));
         let palette = if dark {
             Palette {
-                bg: 0x181818,
-                panel: 0x222222,
-                border: 0x3A3A3A,
-                accent: 0x83E8BD,
-                text: 0xEBEBEB,
-                muted: 0xAAAAAA,
-                selected: 0x253E32,
-                hover: 0x2D2D2D,
+                bg: 0x181B20,
+                panel: 0x22262C,
+                border: 0x353B43,
+                accent: 0x58D4AC,
+                text: 0xE5E9ED,
+                muted: 0xA2ADB8,
+                selected: 0x223E36,
+                hover: 0x2D343C,
                 error: 0xFFB4A9,
             }
         } else {
             Palette {
-                bg: 0xF5F5F5,
+                bg: 0xF6F7F9,
                 panel: 0xFFFFFF,
-                border: 0xDCDCDC,
-                accent: 0x087C53,
-                text: 0x242424,
-                muted: 0x666666,
-                selected: 0xE8F4EE,
-                hover: 0xEBEBEB,
+                border: 0xE4E8EC,
+                accent: 0x00835E,
+                text: 0x202A31,
+                muted: 0x697780,
+                selected: 0xE0EEE8,
+                hover: 0xE5E9ED,
                 error: 0xB42318,
             }
         };
@@ -63,7 +63,7 @@ impl AppearanceExt for Appearance {
         theme.font_family = "Microsoft YaHei UI".into();
         theme.font_size = px(14.);
         theme.mono_font_size = px(13.);
-        theme.radius = px(5.);
+        theme.radius = px(7.);
         theme.shadow = false;
         theme.background = rgb(palette.panel).into();
         theme.foreground = rgb(palette.text).into();
@@ -81,6 +81,8 @@ impl AppearanceExt for Appearance {
         theme.muted_foreground = rgb(palette.muted).into();
         theme.accent = rgb(palette.selected).into();
         theme.accent_foreground = rgb(palette.text).into();
+        theme.slider_bar = rgb(palette.accent).into();
+        theme.slider_thumb = rgb(palette.panel).into();
         theme.caret = rgb(palette.accent).into();
         theme.ring = rgb(palette.accent).into();
         theme.selection = rgb(palette.selected).into();
