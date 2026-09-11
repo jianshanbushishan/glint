@@ -29,7 +29,7 @@ impl SettingsView {
         navigation = navigation.child(
             div()
                 .px_3()
-                .pt_5()
+                .pt_4()
                 .pb_1()
                 .text_xs()
                 .text_color(rgb(self.palette.muted))
@@ -55,18 +55,18 @@ impl SettingsView {
                 ),
         );
         v_flex()
-            .w(px(164.))
+            .w(px(144.))
             .h_full()
             .flex_shrink_0()
             .bg(rgb(self.palette.bg))
             .border_r_1()
             .border_color(rgb(self.palette.border))
             .px_2()
-            .py_4()
+            .py_3()
             .child(
                 h_flex()
                     .px_3()
-                    .pb_6()
+                    .pb_4()
                     .gap_2()
                     .child(
                         div()
@@ -97,7 +97,7 @@ impl SettingsView {
             .child(
                 div()
                     .px_3()
-                    .pt_5()
+                    .pt_4()
                     .text_xs()
                     .text_color(rgb(self.palette.muted))
                     .child(concat!("Glint · v", env!("CARGO_PKG_VERSION"))),
@@ -173,7 +173,7 @@ impl SettingsView {
             Page::Scope(id) if id == "global" => IconName::Globe,
             _ => IconName::LayoutDashboard,
         };
-        let mut heading = v_flex().gap_3().px_6().pt_5().pb_4().flex_shrink_0().child(
+        let mut heading = v_flex().gap_3().px_5().pt_4().pb_4().flex_shrink_0().child(
             h_flex()
                 .gap_3()
                 .justify_between()
@@ -385,8 +385,8 @@ impl SettingsView {
         v_flex()
             .w_full()
             .min_w_0()
-            .p_4()
-            .gap_4()
+            .p_3()
+            .gap_3()
             .rounded_lg()
             .bg(rgb(self.palette.panel))
             .border_1()
@@ -431,7 +431,7 @@ impl SettingsView {
                     })),
             );
         }
-        let mut colors = h_flex().gap_5().flex_wrap();
+        let mut colors = h_flex().gap_4().flex_wrap();
         for (id, label, state) in [
             ("disabled-pen-color", "正常颜色", &self.pen_color),
             (
@@ -460,7 +460,7 @@ impl SettingsView {
                     .child(self.muted(label)),
             );
         }
-        let mut parameters = v_flex().flex_1().min_w(px(220.)).gap_4().child(colors);
+        let mut parameters = v_flex().flex_1().min_w(px(220.)).gap_3().child(colors);
         for (label, state, value) in [
             (
                 "线宽",
@@ -517,7 +517,7 @@ impl SettingsView {
                 h_flex()
                     .items_start()
                     .flex_wrap()
-                    .gap_5()
+                    .gap_4()
                     .child(parameters)
                     .child(
                         v_flex()
@@ -595,12 +595,12 @@ impl SettingsView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .px_6()
+            .px_5()
             .pb_5()
             .child(
                 v_flex()
                     .w_full()
-                    .gap_4()
+                    .gap_3()
                     .child(
                         self.settings_section(
                             "操作",
@@ -750,7 +750,7 @@ impl SettingsView {
         let rows = self.rows(cx);
         let mut list = v_flex().gap_1().p_2();
         if rows.is_empty() {
-            list = list.child(div().p_4().child(self.muted(
+            list = list.child(div().p_3().child(self.muted(
                 if self.value("search", cx).is_empty() {
                     "暂无手势，点击“新建”添加。"
                 } else {
@@ -883,9 +883,9 @@ impl SettingsView {
             );
         }
         v_flex()
-            .w(px(265.))
+            .w(px(220.))
             .max_w(relative(0.42))
-            .min_w(px(210.))
+            .min_w(px(180.))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
@@ -893,7 +893,7 @@ impl SettingsView {
             .child(
                 v_flex()
                     .gap_2()
-                    .p_4()
+                    .p_3()
                     .flex_shrink_0()
                     .child(
                         h_flex()
@@ -952,7 +952,7 @@ impl SettingsView {
     }
 
     fn render_editor(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut editor = v_flex().gap_4().p_5();
+        let mut editor = v_flex().gap_3().p_4();
         let Some(selected) = &self.selected else {
             return div()
                 .id("gesture-editor-scroll")
@@ -1029,14 +1029,14 @@ impl SettingsView {
         editor = editor.child(
             v_flex()
                 .gap_3()
-                .p_4()
+                .p_3()
                 .rounded_lg()
                 .bg(rgb(self.palette.bg))
                 .border_1()
                 .border_color(rgb(self.palette.border))
                 .child(
                     h_flex()
-                        .gap_4()
+                        .gap_3()
                         .child(
                             div()
                                 .w(px(76.))
@@ -1273,7 +1273,7 @@ impl SettingsView {
             .when_some(validation, |el, reason| {
                 el.child(
                     v_flex()
-                        .px_5()
+                        .px_4()
                         .py_3()
                         .gap_2()
                         .flex_shrink_0()
@@ -1325,7 +1325,7 @@ impl SettingsView {
     fn render_editor_blocked_modal(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let reason = self.editor_blocked.as_ref()?;
         Some(self.modal_frame().child(
-            v_flex().gap_4().p_6().w(px(440.)).max_w_full().rounded_lg()
+            v_flex().gap_3().p_5().w(px(440.)).max_w_full().rounded_lg()
                 .bg(rgb(self.palette.panel)).border_1().border_color(rgb(self.palette.border))
                 .child(h_flex().gap_2()
                     .child(Icon::new(IconName::TriangleAlert).size(px(22.)).text_color(rgb(self.palette.error)))
@@ -1352,7 +1352,7 @@ impl SettingsView {
         h_flex()
             .gap_3()
             .justify_between()
-            .px_6()
+            .px_5()
             .py_3()
             .flex_shrink_0()
             .border_t_1()
@@ -1405,8 +1405,8 @@ impl SettingsView {
             self.modal_frame()
                 .child(
                     v_flex()
-                        .gap_4()
-                        .p_6()
+                        .gap_3()
+                        .p_5()
                         .w(px(460.))
                         .max_w_full()
                         .rounded_lg()
@@ -1509,8 +1509,8 @@ impl SettingsView {
             self.modal_frame()
                 .child(
                     v_flex()
-                        .gap_4()
-                        .p_6()
+                        .gap_3()
+                        .p_5()
                         .w(px(440.))
                         .max_w_full()
                         .rounded_lg()
@@ -1602,7 +1602,7 @@ impl SettingsView {
             .items_start()
             .justify_center()
             .pt(px(64.))
-            .px_5()
+            .px_4()
             .bg(rgba(0x00000066))
     }
 }

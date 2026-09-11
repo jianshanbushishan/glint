@@ -408,7 +408,7 @@ fn main() {
             })
             .detach();
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1000.), px(740.)), cx)),
+                window_bounds: Some(WindowBounds::centered(size(px(800.), px(592.)), cx)),
                 window_min_size: Some(size(px(680.), px(496.))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Glint · 设置".into()),
