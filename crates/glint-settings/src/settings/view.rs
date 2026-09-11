@@ -2,6 +2,35 @@ use super::*;
 use gpui_component::{Icon, IconName};
 
 impl SettingsView {
+    fn page_icon(&self, page: &Page, size: f32, fallback: IconName) -> AnyElement {
+        let image = if let Page::Scope(id) = page {
+            self.scope_drafts
+                .get(id)
+                .and_then(|draft| draft.application.as_ref())
+                .or_else(|| {
+                    self.config
+                        .as_ref()?
+                        .applications
+                        .iter()
+                        .find(|app| &app.id == id)
+                })
+                .and_then(|app| crate::application_icon::load(&app.process_path))
+        } else {
+            None
+        };
+        if let Some(image) = image {
+            gpui::img(image)
+                .size(px(size))
+                .flex_shrink_0()
+                .into_any_element()
+        } else {
+            Icon::new(fallback)
+                .size(px(size))
+                .flex_shrink_0()
+                .into_any_element()
+        }
+    }
+
     pub(super) fn modal_open(&self) -> bool {
         self.app_dialog.is_some() || self.recording.is_some() || self.editor_blocked.is_some()
     }
@@ -11,7 +40,12 @@ impl SettingsView {
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut navigation = v_flex().gap_1();
+        let mut global_navigation = v_flex()
+            .gap_1()
+            .py_1()
+            .border_t_1()
+            .border_b_1()
+            .border_color(rgb(self.palette.border));
         for (id, label, page) in [
             (
                 "nav-general".to_owned(),
@@ -24,8 +58,9 @@ impl SettingsView {
                 Page::Scope("global".into()),
             ),
         ] {
-            navigation = navigation.child(self.navigation_item(id, label, page, cx));
+            global_navigation = global_navigation.child(self.navigation_item(id, label, page, cx));
         }
+        let mut navigation = v_flex().gap_1().child(global_navigation);
         navigation = navigation.child(
             div()
                 .px_3()
@@ -99,8 +134,15 @@ impl SettingsView {
                     .px_3()
                     .pt_4()
                     .text_xs()
+                    .text_center()
                     .text_color(rgb(self.palette.muted))
-                    .child(concat!("Glint · v", env!("CARGO_PKG_VERSION"))),
+                    .child(concat!("Glint · v", env!("CARGO_PKG_VERSION")))
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(11.))
+                            .child(env!("GLINT_BUILD_TIME")),
+                    ),
             )
             .into_any_element()
     }
@@ -131,6 +173,7 @@ impl SettingsView {
                     || (selected && self.editor_dirty)
             }
         };
+        let icon = self.page_icon(&page, 16., icon);
         div()
             .id(SharedString::from(id))
             .px_3()
@@ -158,7 +201,7 @@ impl SettingsView {
                         h_flex()
                             .w_full()
                             .gap_2()
-                            .child(Icon::new(icon).size(px(16.)).flex_shrink_0())
+                            .child(icon)
                             .child(div().min_w_0().truncate().child(label)),
                     )
                     .when(dirty, |el| el.child(div().text_xs().child("· 未应用"))),
@@ -193,11 +236,8 @@ impl SettingsView {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(
-                                    Icon::new(icon)
-                                        .size(px(21.))
-                                        .text_color(rgb(self.palette.accent)),
-                                ),
+                                .text_color(rgb(self.palette.accent))
+                                .child(self.page_icon(&self.page, 21., icon)),
                         )
                         .child(
                             v_flex()
@@ -363,8 +403,6 @@ impl SettingsView {
                         .bg(rgb(self.palette.bg))
                         .border_t_1()
                         .border_color(rgb(self.palette.border))
-                        .child(div().text_sm().child("未单独配置的手势"))
-                        .child(self.muted("已为此应用单独配置的手势始终优先生效。"))
                         .child(options),
                 );
             }
@@ -1342,13 +1380,6 @@ impl SettingsView {
 
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let changed = self.current_dirty();
-        let status = if self.pending {
-            "正在应用…"
-        } else if changed {
-            "有未应用的修改"
-        } else {
-            "设置已保存"
-        };
         h_flex()
             .gap_3()
             .justify_between()
@@ -1362,35 +1393,26 @@ impl SettingsView {
                     .flex_1()
                     .min_w_0()
                     .gap_1()
-                    .child(self.muted(if self.connected {
-                        status
-                    } else {
-                        "后台未连接"
-                    }))
-                    .when(
-                        !self.notice.is_empty()
-                            && (self.is_error
-                                || !matches!(self.notice.as_str(), "完成" | "主题已保存")),
-                        |el| {
-                            el.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(if self.is_error {
-                                        self.palette.error
-                                    } else {
-                                        self.palette.muted
-                                    }))
-                                    .child(self.notice.clone()),
-                            )
-                        },
-                    ),
+                    .when(!self.connected, |el| el.child(self.muted("后台未连接")))
+                    .when(!self.notice.is_empty() && self.is_error, |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(if self.is_error {
+                                    self.palette.error
+                                } else {
+                                    self.palette.muted
+                                }))
+                                .child(self.notice.clone()),
+                        )
+                    }),
             )
             .child(
                 h_flex().gap_2().flex_shrink_0().child(
                     Button::new("apply-settings")
                         .small()
                         .primary()
-                        .label("应用设置")
+                        .label("应用")
                         .disabled(self.controls_blocked() || !changed)
                         .on_click(cx.listener(|this, _, _, cx| this.save_current(cx))),
                 ),

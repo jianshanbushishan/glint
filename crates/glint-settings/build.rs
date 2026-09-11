@@ -1,4 +1,13 @@
 fn main() {
+    // Refresh the embedded timestamp whenever the settings package is rebuilt.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=build.rs");
+    let built_at = chrono::Local::now();
+    println!(
+        "cargo:rustc-env=GLINT_BUILD_TIME={}",
+        built_at.format("%Y%m%d-%H:%M")
+    );
     println!("cargo:rerun-if-changed=../../assets/glint.rc");
     println!("cargo:rerun-if-changed=../../assets/glint.ico");
     println!("cargo:rerun-if-changed=../../assets/glint-paused.ico");

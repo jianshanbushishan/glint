@@ -385,8 +385,8 @@ impl SettingsView {
                     window.open_dialog(cx, move |dialog, _, _| {
                         let tx = tx.clone();
                         dialog
-                            .title("尚未应用的修改")
-                            .child("关闭后将放弃尚未应用的设置。")
+                            .title("尚未保存的修改")
+                            .child("部分修改尚未保存，关闭后将放弃这些修改。")
                             .confirm()
                             .button_props(
                                 DialogButtonProps::default()
@@ -979,7 +979,7 @@ impl SettingsView {
             cx,
         );
         self.editor_dirty = true;
-        self.notice = "选择或记录手势，配置动作后点击右下角应用设置".into();
+        self.notice = "选择或记录手势，配置动作后点击“应用”生效".into();
         cx.notify();
     }
     fn customize_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1098,7 +1098,7 @@ impl SettingsView {
                             this.select_first(window, cx);
                         }
                         this.is_error = false;
-                        this.notice = "修改已暂存，点击右下角应用设置生效".into();
+                        this.notice = "修改点击“应用”后生效".into();
                         cx.notify();
                     });
                     true
@@ -1124,7 +1124,7 @@ impl SettingsView {
         self.recording_shortcut = false;
         self.set("action_value", value, window, cx);
         self.editor_dirty = true;
-        self.notice = "快捷键已录入，点击右下角应用设置生效".into();
+        self.notice = "快捷键已录入，点击“应用”后生效".into();
         cx.notify();
     }
     fn cancel_shortcut(&mut self, cx: &mut Context<Self>) {
@@ -1172,7 +1172,7 @@ impl SettingsView {
             self.sync_template(window, cx);
             self.loading = false;
             self.editor_dirty = true;
-            self.notice = "新手势已记录，应用设置后生效".into();
+            self.notice = "新手势已记录，点击“应用”后生效".into();
             cx.notify();
         }
     }
@@ -1269,7 +1269,7 @@ impl SettingsView {
         self.set("search", "", window, cx);
         self.sync_fallback(window, cx);
         self.select_first(window, cx);
-        self.notice = "应用配置已暂存，点击右下角应用设置生效".into();
+        self.notice = "应用配置已修改，点击“应用”后生效".into();
         cx.notify();
     }
     fn change_application_program(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1349,10 +1349,17 @@ impl SettingsView {
                     let draft = this.scope_drafts.entry(application.id.clone()).or_default();
                     draft.application = Some(application);
                     draft.dirty = true;
-                    this.notice = "应用路径已暂存，点击右下角应用设置生效".into();
+                    this.notice = "应用路径已修改，点击“应用”后生效".into();
                     cx.notify();
                 });
             }
+            // Clear the picker state after cancellation or errors as well.
+            let _ = this.update_in(cx, |this, _, cx| {
+                if this.application_pick_generation.as_ref() == Some(&generation) {
+                    this.application_pick_generation = None;
+                    cx.notify();
+                }
+            });
         })
         .detach();
     }
@@ -1488,7 +1495,7 @@ impl SettingsView {
             let id = id.clone();
             dialog
                 .title("删除应用手势")
-                .child(format!("确定删除“{name}”的全部专属绑定和应用规则？该应用未应用的修改也会丢弃。删除立即生效，之后按全局规则处理手势。"))
+                .child(format!("确定删除“{name}”的全部专属绑定和应用规则？该应用未保存的修改也会丢弃。删除立即生效，之后按全局规则处理手势。"))
                 .confirm()
                 .button_props(
                     DialogButtonProps::default()
@@ -1535,7 +1542,7 @@ impl SettingsView {
             let draft = self.scope_drafts.entry(application.id.clone()).or_default();
             draft.application = Some(application);
             draft.dirty = true;
-            self.notice = "应用状态已暂存，点击右下角应用设置生效".into();
+            self.notice = "应用状态已修改，点击“应用”后生效".into();
             cx.notify();
         }
     }
@@ -1569,52 +1576,53 @@ impl SettingsView {
             opacity: self.pen_opacity.read(cx).value().start() / 100.,
         }
     }
+    fn preferences_command(&self, cx: &App) -> Command {
+        let button = match chosen(&self.trigger, cx) {
+            "鼠标中键" => MouseButton::Middle,
+            "侧键 X1" => MouseButton::X1,
+            "侧键 X2" => MouseButton::X2,
+            "鼠标左键" => MouseButton::Left,
+            _ => MouseButton::Right,
+        };
+        Command::SetPreferences {
+            pen: self.pen(cx),
+            stroke_button: button,
+            logging: LoggingConfig {
+                level: match chosen(&self.log_level, cx) {
+                    "off" => LogLevel::Off,
+                    "error" => LogLevel::Error,
+                    "warn" => LogLevel::Warn,
+                    "debug" => LogLevel::Debug,
+                    "trace" => LogLevel::Trace,
+                    _ => LogLevel::Info,
+                },
+            },
+        }
+    }
+    fn scope_command(&self, id: &str) -> Option<Command> {
+        let draft = self.scope_drafts.get(id).filter(|draft| draft.dirty)?;
+        Some(Command::ApplyScope {
+            package_id: id.to_owned(),
+            application: draft.application.clone(),
+            upsert_actions: draft.upserts.clone(),
+            remove_actions: draft.removed.clone(),
+        })
+    }
     fn save_current(&mut self, cx: &mut Context<Self>) {
-        if !self.connected || self.pending {
+        if !self.connected
+            || self.pending
+            || self.modal_open()
+            || self.recording_shortcut
+            || !self.current_dirty()
+        {
             return;
         }
         if matches!(self.page, Page::General) {
-            let button = match chosen(&self.trigger, cx) {
-                "鼠标中键" => MouseButton::Middle,
-                "侧键 X1" => MouseButton::X1,
-                "侧键 X2" => MouseButton::X2,
-                "鼠标左键" => MouseButton::Left,
-                _ => MouseButton::Right,
-            };
-            self.send(
-                Command::SetPreferences {
-                    pen: self.pen(cx),
-                    stroke_button: button,
-                    logging: LoggingConfig {
-                        level: match chosen(&self.log_level, cx) {
-                            "off" => LogLevel::Off,
-                            "error" => LogLevel::Error,
-                            "warn" => LogLevel::Warn,
-                            "debug" => LogLevel::Debug,
-                            "trace" => LogLevel::Trace,
-                            _ => LogLevel::Info,
-                        },
-                    },
-                },
-                cx,
-            );
-        } else if self.stash_editor(cx) {
-            let id = self.current_scope().unwrap().to_owned();
-            let draft = self.scope_drafts.get(&id).cloned().unwrap_or_default();
-            if !draft.dirty {
-                self.notice = "当前配置没有待应用的修改".into();
-                cx.notify();
-                return;
-            }
-            self.send(
-                Command::ApplyScope {
-                    package_id: id,
-                    application: draft.application,
-                    upsert_actions: draft.upserts,
-                    remove_actions: draft.removed,
-                },
-                cx,
-            );
+            self.send(self.preferences_command(cx), cx);
+        } else if self.stash_editor(cx)
+            && let Some(command) = self.current_scope().and_then(|id| self.scope_command(id))
+        {
+            self.send(command, cx);
         }
     }
     fn set_autostart(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1801,14 +1809,26 @@ impl SettingsView {
                         self.is_error = false;
                         self.notice = response.message;
                         match &reply.command {
-                            Some(Command::SetPreferences { .. }) => {
-                                self.general_dirty = false;
-                                self.prefs_loaded = false;
+                            Some(command @ Command::SetPreferences { .. }) => {
+                                // Controls may emit edits while the worker is saving.
+                                if same_command(command, &self.preferences_command(cx)) {
+                                    self.general_dirty = false;
+                                    self.prefs_loaded = false;
+                                }
                             }
-                            Some(Command::ApplyScope { package_id, .. }) => {
-                                self.scope_drafts.remove(package_id);
-                                self.editor_dirty = false;
-                                self.refresh_selection = true;
+                            Some(command @ Command::ApplyScope { package_id, .. }) => {
+                                if self
+                                    .scope_command(package_id)
+                                    .as_ref()
+                                    .is_some_and(|current| same_command(command, current))
+                                {
+                                    self.scope_drafts.remove(package_id);
+                                }
+                                if self.current_scope() == Some(package_id.as_str())
+                                    && !self.editor_dirty
+                                {
+                                    self.refresh_selection = true;
+                                }
                             }
                             Some(Command::RemoveApplication { package_id }) => {
                                 self.scope_drafts.remove(package_id);
@@ -1833,11 +1853,6 @@ impl SettingsView {
                                 }
                                 Err(error) => self.error(format!("无法监测后台退出：{error}"), cx),
                             }
-                        }
-                        if status.last_error != self.status.last_error
-                            && let Some(error) = &status.last_error
-                        {
-                            self.error(error.clone(), cx);
                         }
                         self.status = status;
                     }
@@ -1884,6 +1899,11 @@ impl SettingsView {
             cx.notify();
         }
     }
+}
+
+fn same_command(left: &Command, right: &Command) -> bool {
+    serde_json::to_string(left).expect("commands are serializable")
+        == serde_json::to_string(right).expect("commands are serializable")
 }
 
 fn shortcut_string(key: &Keystroke) -> Result<String, String> {
@@ -1939,4 +1959,49 @@ fn shortcut_string(key: &Keystroke) -> Result<String, String> {
         normalized.into()
     });
     Ok(parts.join("+"))
+}
+
+#[cfg(test)]
+mod save_reply_tests {
+    use super::{Command, LogLevel, LoggingConfig, MouseButton, PenConfig, same_command};
+
+    #[test]
+    fn preferences_acknowledgement_distinguishes_new_edits() {
+        let submitted = Command::SetPreferences {
+            pen: PenConfig::default(),
+            stroke_button: MouseButton::Right,
+            logging: LoggingConfig {
+                level: LogLevel::Info,
+            },
+        };
+        assert!(same_command(&submitted, &submitted.clone()));
+        let changed = Command::SetPreferences {
+            pen: PenConfig::default(),
+            stroke_button: MouseButton::Middle,
+            logging: LoggingConfig {
+                level: LogLevel::Info,
+            },
+        };
+        assert!(!same_command(&submitted, &changed));
+    }
+
+    #[test]
+    fn scope_acknowledgement_does_not_match_other_scope_or_later_edit() {
+        let submitted = Command::ApplyScope {
+            package_id: "app_one".into(),
+            application: None,
+            upsert_actions: vec![],
+            remove_actions: vec!["action_one".into()],
+        };
+        let mut changed = submitted.clone();
+        if let Command::ApplyScope { remove_actions, .. } = &mut changed {
+            remove_actions.push("action_two".into());
+        }
+        assert!(!same_command(&submitted, &changed));
+        if let Command::ApplyScope { package_id, .. } = &mut changed {
+            *package_id = "app_two".into();
+        }
+        assert!(!same_command(&submitted, &changed));
+        assert!(same_command(&submitted, &submitted.clone()));
+    }
 }

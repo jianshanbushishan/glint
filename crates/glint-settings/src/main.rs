@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod appearance;
+mod application_icon;
 #[cfg(windows)]
 mod engine_process;
 mod preview_path;
@@ -408,10 +409,10 @@ fn main() {
             })
             .detach();
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(800.), px(592.)), cx)),
+                window_bounds: Some(WindowBounds::centered(size(px(800.), px(705.)), cx)),
                 window_min_size: Some(size(px(680.), px(496.))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Glint · 设置".into()),
+                    title: Some("设置".into()),
                     ..Default::default()
                 }),
                 ..Default::default()

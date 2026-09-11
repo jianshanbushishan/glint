@@ -4,6 +4,11 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $outputDirectory = Join-Path $projectRoot 'dist\Glint'
 Push-Location $projectRoot
 try {
+    $metadataJson = cargo metadata --no-deps --format-version 1 --locked --offline
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to read project version.' }
+    $metadata = $metadataJson | ConvertFrom-Json
+    $version = ($metadata.packages | Where-Object { $_.name -eq 'glint' }).version
+    if (-not $version) { throw 'Missing glint package version.' }
     if (-not $SkipBuild) {
         cargo build --workspace --release --locked
         if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
@@ -18,7 +23,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $projectRoot $fileName) -Destination $outputDirectory -Force
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination $outputDirectory -Recurse -Force
-    $archivePath = Join-Path $projectRoot 'dist\Glint-windows-x64.zip'
+    $archivePath = Join-Path $projectRoot "dist\Glint-v$version-windows-x64.zip"
     Compress-Archive -Path (Join-Path $outputDirectory '*') -DestinationPath $archivePath -Force
     Get-FileHash -LiteralPath $archivePath -Algorithm SHA256 | Format-List
     Write-Output "Ready: $outputDirectory"
