@@ -6,7 +6,7 @@ fn main() {
     let built_at = chrono::Local::now();
     println!(
         "cargo:rustc-env=GLINT_BUILD_TIME={}",
-        built_at.format("%Y%m%d-%H:%M")
+        built_at.format("%Y.%m.%d-%H:%M")
     );
     println!("cargo:rerun-if-changed=../../assets/glint.rc");
     println!("cargo:rerun-if-changed=../../assets/glint.ico");

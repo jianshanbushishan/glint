@@ -193,7 +193,11 @@ fn preview(
                 .iter()
                 .map(|p| p.y)
                 .fold(f64::NEG_INFINITY, f64::max);
-            let padding = (width * 1.5 + 2.).max(16.);
+            // Small list icons need less inset so the trajectory fills the tile.
+            // Keep room for the start marker and arrow, and retain the inset
+            // used by larger previews.
+            let shortest_side = f32::from(bounds.size.width).min(f32::from(bounds.size.height));
+            let padding = (width * 1.5 + 2.).max((shortest_side * 0.18).min(16.));
             let available_x = (f32::from(bounds.size.width) - padding * 2.).max(1.);
             let available_y = (f32::from(bounds.size.height) - padding * 2.).max(1.);
             let extent_x = (max_x - min_x) as f32;
