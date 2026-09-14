@@ -15,7 +15,7 @@ pub fn set_enabled(executable: &Path, config_dir: &Path, enabled: bool) -> Resul
 // Encode one argument using the Windows command-line backslash/quote rules.
 // Work on UTF-16 directly so Windows paths need not be valid Unicode.
 #[cfg(any(windows, test))]
-fn quote_argument(argument: &[u16]) -> Vec<u16> {
+pub(crate) fn quote_argument(argument: &[u16]) -> Vec<u16> {
     let mut quoted = vec![b'"' as u16];
     let mut slashes = 0;
     for &unit in argument {

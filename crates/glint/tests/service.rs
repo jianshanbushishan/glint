@@ -55,6 +55,32 @@ fn start_service(dir: &Path) -> Service {
 }
 
 #[test]
+fn replacement_does_not_stop_a_different_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut service = start_service(dir.path());
+    assert!(!call(dir.path(), Command::QuitIfProcess { pid: 0 }).ok);
+    assert!(call(dir.path(), Command::Status).status.unwrap().running);
+    assert!(
+        call(
+            dir.path(),
+            Command::QuitIfProcess {
+                pid: service.0.id()
+            }
+        )
+        .ok
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = service.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "replaced engine did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
 fn deleting_legacy_application_removes_all_bindings_and_preserves_other_scopes() {
     let dir = tempfile::tempdir().unwrap();
     assert!(binary(dir.path()).arg("init").status().unwrap().success());

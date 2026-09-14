@@ -50,6 +50,9 @@ pub enum Command {
         package_id: String,
     },
     Quit,
+    QuitIfProcess {
+        pid: u32,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

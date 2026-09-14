@@ -1,5 +1,6 @@
 //! Windows integration, independent of the settings UI.
 pub mod autostart;
+pub mod elevation;
 
 use glint_core::{GestureContext, Point};
 
@@ -25,6 +26,7 @@ pub enum TrayAction {
     OpenSettings,
     TogglePause,
     Reload,
+    RestartElevated,
     Quit,
 }
 

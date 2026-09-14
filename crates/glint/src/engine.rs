@@ -509,6 +509,14 @@ impl Engine {
                 response.message = "已删除应用手势".into();
                 response.config = Some(self.config.clone());
             }
+            Command::QuitIfProcess { pid } => {
+                ensure!(
+                    pid == std::process::id(),
+                    "后台进程已改变，请重新从托盘操作"
+                );
+                self.quit = true;
+                response.message = "引擎正在退出".into();
+            }
             Command::Quit => {
                 self.quit = true;
                 response.message = "引擎正在退出".into();
@@ -595,6 +603,9 @@ impl Engine {
                         Ok(())
                     }
                     TrayAction::OpenSettings => self.open_settings(),
+                    TrayAction::RestartElevated => {
+                        glint_platform::elevation::restart_elevated(&self.dir)
+                    }
                 };
                 if let Err(error) = result {
                     self.error(format!("{error:#}"));

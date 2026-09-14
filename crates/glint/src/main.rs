@@ -24,18 +24,31 @@ struct Args {
     dir: PathBuf,
     command: String,
     no_hooks: bool,
+    replace_process: Option<u32>,
 }
 fn args() -> Result<Args> {
+    parse_args(std::env::args().skip(1))
+}
+
+fn parse_args(arguments: impl Iterator<Item = String>) -> Result<Args> {
     let mut result = Args {
         dir: config_dir(),
         command: "run".into(),
         no_hooks: false,
+        replace_process: None,
     };
-    let mut args = std::env::args().skip(1);
+    let mut args = arguments;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--config-dir" => result.dir = args.next().context("--config-dir 需要路径")?.into(),
             "--no-hooks" => result.no_hooks = true,
+            "--replace-process" => {
+                result.replace_process = Some(
+                    args.next()
+                        .context("--replace-process 需要进程 ID")?
+                        .parse()?,
+                );
+            }
             "--check" | "check" => result.command = "check".into(),
             "--init" | "init" => result.command = "init".into(),
             "--status" | "status" => result.command = "status".into(),
@@ -52,6 +65,9 @@ fn args() -> Result<Args> {
     }
     if result.dir.is_relative() {
         result.dir = std::env::current_dir()?.join(result.dir);
+    }
+    if result.replace_process.is_some() && (result.command != "run" || result.no_hooks) {
+        bail!("--replace-process 仅用于以管理员权限重启手势后台");
     }
     Ok(result)
 }
@@ -88,7 +104,12 @@ fn run() -> Result<()> {
                     .sum::<usize>()
             );
         }
-        "run" => engine::run(args.dir, args.no_hooks)?,
+        "run" => {
+            if let Some(pid) = args.replace_process {
+                replace_engine(&args.dir, pid)?;
+            }
+            engine::run(args.dir, args.no_hooks)?;
+        }
         command => {
             let command = match command {
                 "status" => Command::Status,
@@ -106,4 +127,49 @@ fn run() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn replace_engine(dir: &std::path::Path, pid: u32) -> Result<()> {
+    anyhow::ensure!(
+        glint_platform::elevation::is_elevated()?,
+        "重启后的后台未获得管理员权限"
+    );
+    // Validate before stopping the working engine. Never replace an unrelated instance.
+    ConfigRuntime::load(&dir.join("config.json"))?;
+    let response = request(dir, Command::Status)?;
+    anyhow::ensure!(
+        response.ok && response.status.as_ref().and_then(|s| s.engine_pid) == Some(pid),
+        "后台进程已改变，请重新从托盘操作"
+    );
+    glint_platform::elevation::wait_for_exit(pid, || {
+        let response = request(dir, Command::QuitIfProcess { pid })?;
+        anyhow::ensure!(response.ok, "{}", response.message);
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replacement_only_accepts_live_engine_start() {
+        let parse = |args: &[&str]| parse_args(args.iter().map(|arg| (*arg).to_owned()));
+        assert_eq!(
+            parse(&["--replace-process", "123", "run"])
+                .unwrap()
+                .replace_process,
+            Some(123)
+        );
+        for args in [
+            vec!["--replace-process"],
+            vec!["--replace-process", "invalid"],
+            vec!["--replace-process", "123", "--no-hooks"],
+            vec!["--replace-process", "123", "quit"],
+        ] {
+            assert!(parse(&args).is_err());
+        }
+        assert!(parse(&["--no-hooks"]).unwrap().replace_process.is_none());
+        assert!(parse(&["status"]).unwrap().replace_process.is_none());
+    }
 }

@@ -955,6 +955,7 @@ unsafe extern "system" fn tray_proc(
                     2 => Some(TrayAction::TogglePause),
                     3 => Some(TrayAction::Reload),
                     4 => Some(TrayAction::Quit),
+                    5 => Some(TrayAction::RestartElevated),
                     _ => None,
                 }
             }

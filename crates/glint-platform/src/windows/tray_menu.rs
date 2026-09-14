@@ -102,9 +102,14 @@ pub(super) unsafe fn show(window: HWND, point: POINT, pause_label: &str) -> i32 
         let selected = CreateSolidBrush(color(if dark { 0x253e32 } else { 0xe8f4ee }));
         let border = CreateSolidBrush(color(if dark { 0x3a3a3a } else { 0xdcdcdc }));
         let menu = CreatePopupMenu();
-        let items: Vec<Item> = ["打开设置", pause_label, "重新加载配置", "", "退出 Glint"]
-            .into_iter()
-            .map(|text| Item {
+        let mut entries = vec![("打开设置", 1), (pause_label, 2), ("重新加载配置", 3)];
+        if !crate::elevation::is_elevated().unwrap_or(false) {
+            entries.push(("以管理员权限重启", 5));
+        }
+        entries.extend([("", 0), ("退出 Glint", 4)]);
+        let items: Vec<Item> = entries
+            .iter()
+            .map(|(text, _)| Item {
                 text: wide(text),
                 font,
                 background,
@@ -123,7 +128,7 @@ pub(super) unsafe fn show(window: HWND, point: POINT, pause_label: &str) -> i32 
             };
             SetMenuInfo(menu, &info);
         }
-        for (item, id) in items.iter().zip([1, 2, 3, 0, 4]) {
+        for (item, &(_, id)) in items.iter().zip(&entries) {
             // Keep the string on owner-drawn entries for accessibility clients.
             let info = MENUITEMINFOW {
                 cbSize: size_of::<MENUITEMINFOW>() as u32,
