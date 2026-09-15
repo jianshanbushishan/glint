@@ -6,6 +6,8 @@
 
 ## 启动
 
+运行 `dist/Glint-v0.2.3-windows-x64-setup.exe` 安装后，可从开始菜单打开 Glint。安装仅针对当前用户，默认目录为 `%LOCALAPPDATA%\Programs\Glint`，可选创建桌面快捷方式；可从 Windows“已安装的应用”卸载。升级及卸载保留 `%APPDATA%\Glint` 中的配置，卸载会清理指向本安装目录的开机启动项。
+
 从 `dist/Glint` 双击 **`glint-settings.exe`**。设置程序会自动启动同目录的 `glint.exe`。也可以只运行后台，通过托盘菜单打开设置、暂停、重载或退出。
 
 配置默认存放在 `%APPDATA%\Glint`，首次启动自动创建。无需安装 .NET。开机启动默认关闭，可在“常规 → 启动”中开启，切换立即保存；登录 Windows 后使用当前配置在后台运行，不弹出设置窗口。
@@ -133,6 +135,22 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace --release --locked
 pwsh -File scripts/package.ps1
 ```
+
+### 制作 Windows 安装包
+
+安装 [Inno Setup 6](https://jrsoftware.org/isdl.php)，然后运行：
+
+```powershell
+pwsh -NoProfile -File scripts/build-installer.ps1
+# 复用本脚本已构建的 x64 release 程序：
+pwsh -NoProfile -File scripts/build-installer.ps1 -SkipBuild
+# 编译器不在标准位置时：
+pwsh -NoProfile -File scripts/build-installer.ps1 -IsccPath 'C:\Tools\Inno Setup 6\ISCC.exe'
+```
+
+脚本从 Cargo 元数据读取版本，使用 `--locked --target x86_64-pc-windows-msvc` 构建，输出 `dist/Glint-v<版本>-windows-x64-setup.exe` 和对应 `.sha256` 校验文件。安装包面向 Windows 10 1903 及以上 / Windows 11，包含两个程序、文档以及 Visual C++ x64 运行库。运行库默认从 Visual Studio 的 `VC\Redist\MSVC` 目录发现，也可使用 `-RuntimeDirectory` 指定其中的 `x64\Microsoft.VC*.CRT` 目录；更新安装包时应同步更新该运行库。安装包未进行代码签名。
+
+升级、卸载前请通过托盘菜单退出 Glint（含以管理员权限运行的后台），避免程序文件被占用；升级时保留原安装路径以继续使用现有开机启动设置。原有 `scripts/package.ps1` 仍用于制作便携 ZIP。
 
 调试运行：
 
