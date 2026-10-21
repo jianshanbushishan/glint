@@ -413,8 +413,8 @@ fn main() {
             })
             .detach();
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(800.), px(705.)), cx)),
-                window_min_size: Some(size(px(680.), px(496.))),
+                window_bounds: Some(WindowBounds::centered(size(px(900.), px(740.)), cx)),
+                window_min_size: Some(size(px(760.), px(520.))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("设置".into()),
                     ..Default::default()

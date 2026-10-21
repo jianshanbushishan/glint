@@ -5,6 +5,7 @@ use gpui_component::{Theme, ThemeMode};
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub bg: u32,
+    pub sidebar: u32,
     pub panel: u32,
     pub border: u32,
     pub accent: u32,
@@ -36,44 +37,49 @@ impl AppearanceExt for Appearance {
         window.defer(cx, move |window, _| update_titlebar(window, dark));
         let palette = if dark {
             Palette {
-                bg: 0x181B20,
-                panel: 0x22262C,
-                border: 0x353B43,
-                accent: 0x58D4AC,
-                text: 0xE5E9ED,
-                muted: 0xA2ADB8,
-                selected: 0x223E36,
-                hover: 0x2D343C,
+                bg: 0x141B19,
+                sidebar: 0x18211E,
+                panel: 0x1D2823,
+                border: 0x34443C,
+                accent: 0x70DDB1,
+                text: 0xE8F0EC,
+                muted: 0xA5B8AE,
+                selected: 0x253F33,
+                hover: 0x29392F,
                 error: 0xFFB4A9,
             }
         } else {
             Palette {
-                bg: 0xF6F7F9,
+                bg: 0xF3F6F4,
+                sidebar: 0xF9FBFA,
                 panel: 0xFFFFFF,
-                border: 0xE4E8EC,
-                accent: 0x00835E,
-                text: 0x202A31,
-                muted: 0x697780,
-                selected: 0xE0EEE8,
-                hover: 0xE5E9ED,
+                border: 0xDFE7E2,
+                accent: 0x087F5B,
+                text: 0x23382E,
+                muted: 0x63786C,
+                selected: 0xE2F2E9,
+                hover: 0xEAF0EC,
                 error: 0xB42318,
             }
         };
         let theme = Theme::global_mut(cx);
-        theme.font_family = "Microsoft YaHei UI".into();
+        // Segoe UI is available on Windows 10 and 11; the view supplies CJK fallbacks.
+        theme.font_family = "Segoe UI".into();
         theme.font_size = px(14.);
+        theme.mono_font_family = "Consolas".into();
         theme.mono_font_size = px(13.);
-        theme.radius = px(7.);
+        theme.radius = px(8.);
+        theme.radius_lg = px(12.);
         theme.shadow = false;
         theme.background = rgb(palette.panel).into();
         theme.foreground = rgb(palette.text).into();
         theme.border = rgb(palette.border).into();
         theme.input = rgb(palette.border).into();
         theme.primary = rgb(palette.accent).into();
-        theme.primary_hover = rgb(if dark { 0xA1F0CF } else { 0x066A47 }).into();
-        theme.primary_active = rgb(if dark { 0x64CBA3 } else { 0x055C3D }).into();
+        theme.primary_hover = rgb(if dark { 0x94E8C3 } else { 0x066A4B }).into();
+        theme.primary_active = rgb(if dark { 0x52C99A } else { 0x05563D }).into();
         theme.primary_foreground = rgb(if dark { 0x11231A } else { 0xFFFFFF }).into();
-        theme.secondary = rgb(if dark { 0x303030 } else { 0xF0F0F0 }).into();
+        theme.secondary = rgb(palette.bg).into();
         theme.secondary_foreground = rgb(palette.text).into();
         theme.secondary_hover = rgb(palette.hover).into();
         theme.secondary_active = rgb(palette.selected).into();
@@ -81,6 +87,13 @@ impl AppearanceExt for Appearance {
         theme.muted_foreground = rgb(palette.muted).into();
         theme.accent = rgb(palette.selected).into();
         theme.accent_foreground = rgb(palette.text).into();
+        theme.list_hover = rgb(palette.hover).into();
+        theme.list_active = rgb(palette.selected).into();
+        theme.list_active_border = rgb(palette.accent).into();
+        theme.popover = rgb(palette.panel).into();
+        theme.popover_foreground = rgb(palette.text).into();
+        theme.switch = rgb(if dark { 0x4B6053 } else { 0xB6C8BC }).into();
+        theme.switch_thumb = rgb(0xFFFFFF).into();
         theme.slider_bar = rgb(palette.accent).into();
         theme.slider_thumb = rgb(palette.panel).into();
         theme.caret = rgb(palette.accent).into();

@@ -42,7 +42,7 @@ impl SettingsView {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut global_navigation = v_flex()
             .gap_1()
-            .py_1()
+            .py_2()
             .border_t_1()
             .border_b_1()
             .border_color(rgb(self.palette.border));
@@ -66,7 +66,8 @@ impl SettingsView {
                 .px_3()
                 .pt_4()
                 .pb_1()
-                .text_xs()
+                .text_size(px(12.))
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(self.palette.muted))
                 .child("应用专属"),
         );
@@ -82,7 +83,8 @@ impl SettingsView {
             Button::new("add-application")
                 .ghost()
                 .small()
-                .label("＋ 添加应用")
+                .icon(IconName::Plus)
+                .label("添加应用")
                 .w_full()
                 .disabled(self.controls_blocked())
                 .on_click(
@@ -90,35 +92,45 @@ impl SettingsView {
                 ),
         );
         v_flex()
-            .w(px(144.))
+            .w(px(184.))
             .h_full()
             .flex_shrink_0()
-            .bg(rgb(self.palette.bg))
+            .bg(rgb(self.palette.sidebar))
             .border_r_1()
             .border_color(rgb(self.palette.border))
-            .px_2()
-            .py_3()
+            .px_3()
+            .py_5()
             .child(
                 h_flex()
-                    .px_3()
-                    .pb_4()
-                    .gap_2()
+                    .px_2()
+                    .pb_5()
+                    .gap_3()
                     .child(
                         div()
-                            .size(px(28.))
-                            .rounded_md()
+                            .size(px(36.))
+                            .flex_shrink_0()
+                            .rounded(px(11.))
                             .bg(rgb(self.palette.accent))
-                            .text_color(rgb(self.palette.panel))
+                            .text_color(rgb(self.palette.bg))
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(Icon::new(IconName::Redo2).size(px(16.))),
+                            .child(Icon::new(IconName::Redo2).size(px(21.))),
                     )
                     .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Glint"),
+                        v_flex()
+                            .child(
+                                div()
+                                    .text_size(px(22.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Glint"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(self.palette.muted))
+                                    .child("掠影 · 鼠标手势"),
+                            ),
                     ),
             )
             .child(
@@ -133,8 +145,7 @@ impl SettingsView {
                 div()
                     .px_3()
                     .pt_4()
-                    .text_xs()
-                    .text_center()
+                    .text_size(px(12.))
                     .text_color(rgb(self.palette.muted))
                     .child(concat!("Glint · v", env!("CARGO_PKG_VERSION")))
                     .child(
@@ -177,34 +188,44 @@ impl SettingsView {
         div()
             .id(SharedString::from(id))
             .px_3()
-            .py_2()
-            .rounded_md()
+            .py(px(11.))
+            .rounded(px(9.))
+            .text_size(px(14.))
             .cursor_pointer()
             .text_color(rgb(if selected {
                 self.palette.accent
             } else {
-                self.palette.muted
+                self.palette.text
             }))
             .when(selected, |el| {
                 el.bg(rgb(self.palette.selected))
-                    .font_weight(FontWeight::MEDIUM)
+                    .font_weight(FontWeight::SEMIBOLD)
             })
-            .hover(|el| el.bg(rgb(self.palette.hover)))
+            .hover(|el| {
+                el.bg(rgb(if selected {
+                    self.palette.selected
+                } else {
+                    self.palette.hover
+                }))
+            })
             .on_click(
                 cx.listener(move |this, _, window, cx| this.select_page(page.clone(), window, cx)),
             )
             .child(
-                v_flex()
+                h_flex()
                     .w_full()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .child(icon)
-                            .child(div().min_w_0().truncate().child(label)),
-                    )
-                    .when(dirty, |el| el.child(div().text_xs().child("· 未应用"))),
+                    .gap_2()
+                    .child(icon)
+                    .child(div().flex_1().min_w_0().truncate().child(label))
+                    .when(dirty, |el| {
+                        el.child(
+                            div()
+                                .size(px(6.))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .bg(rgb(self.palette.accent)),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -216,7 +237,7 @@ impl SettingsView {
             Page::Scope(id) if id == "global" => IconName::Globe,
             _ => IconName::LayoutDashboard,
         };
-        let mut heading = v_flex().gap_3().px_5().pt_4().pb_4().flex_shrink_0().child(
+        let mut heading = v_flex().gap_4().px_6().py_5().flex_shrink_0().child(
             h_flex()
                 .gap_3()
                 .justify_between()
@@ -227,12 +248,10 @@ impl SettingsView {
                         .min_w_0()
                         .child(
                             div()
-                                .size(px(40.))
+                                .size(px(44.))
                                 .flex_shrink_0()
-                                .rounded_lg()
-                                .bg(rgb(self.palette.bg))
-                                .border_1()
-                                .border_color(rgb(self.palette.border))
+                                .rounded(px(13.))
+                                .bg(rgb(self.palette.selected))
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -245,8 +264,8 @@ impl SettingsView {
                                 .min_w_0()
                                 .child(
                                     div()
-                                        .text_xl()
-                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_size(px(24.))
+                                        .font_weight(FontWeight::SEMIBOLD)
                                         .child(self.page_title()),
                                 )
                                 .child(self.muted(if application.is_some() {
@@ -282,7 +301,8 @@ impl SettingsView {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_xs()
+                            .truncate()
+                            .text_size(px(12.))
                             .text_color(rgb(self.palette.muted))
                             .child(application.process_path.clone()),
                     )
@@ -413,7 +433,7 @@ impl SettingsView {
 
     fn muted(&self, text: impl Into<SharedString>) -> AnyElement {
         div()
-            .text_xs()
+            .text_size(px(12.))
             .text_color(rgb(self.palette.muted))
             .child(text.into())
             .into_any_element()
@@ -423,9 +443,9 @@ impl SettingsView {
         v_flex()
             .w_full()
             .min_w_0()
-            .p_3()
-            .gap_3()
-            .rounded_lg()
+            .p_4()
+            .gap_4()
+            .rounded(px(12.))
             .bg(rgb(self.palette.panel))
             .border_1()
             .border_color(rgb(self.palette.border))
@@ -435,19 +455,48 @@ impl SettingsView {
         v_flex()
             .w_full()
             .gap_2()
-            .child(self.muted(title))
+            .child(
+                div()
+                    .px_1()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(self.palette.muted))
+                    .child(title),
+            )
             .child(content)
+    }
+
+    fn settings_row(
+        &self,
+        title: &'static str,
+        description: &'static str,
+        control: impl IntoElement,
+    ) -> Div {
+        h_flex()
+            .w_full()
+            .justify_between()
+            .flex_wrap()
+            .gap_3()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(220.))
+                    .gap_1()
+                    .child(div().font_weight(FontWeight::MEDIUM).child(title))
+                    .child(self.muted(description)),
+            )
+            .child(control)
     }
 
     fn render_general(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let disabled = self.controls_blocked();
-        let narrow = window.viewport_size().width < px(740.);
+        let narrow = window.viewport_size().width < px(860.);
         let mut themes = h_flex()
             .gap_1()
             .p_1()
             .flex_shrink_0()
             .bg(rgb(self.palette.bg))
-            .rounded_md();
+            .rounded(px(9.));
         for (id, label, appearance) in [
             ("theme-system", "跟随系统", Appearance::System),
             ("theme-light", "浅色", Appearance::Light),
@@ -458,11 +507,13 @@ impl SettingsView {
                     .disabled(self.modal_open())
                     .small()
                     .ghost()
+                    .h(px(30.))
                     .label(label)
                     .when(self.ui_settings.appearance == appearance, |button| {
                         button
                             .bg(rgb(self.palette.panel))
                             .text_color(rgb(self.palette.accent))
+                            .font_weight(FontWeight::SEMIBOLD)
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.set_appearance(appearance, window, cx)
@@ -498,7 +549,7 @@ impl SettingsView {
                     .child(self.muted(label)),
             );
         }
-        let mut parameters = v_flex().flex_1().min_w(px(220.)).gap_3().child(colors);
+        let mut parameters = v_flex().flex_1().min_w(px(200.)).gap_4().child(colors);
         for (label, state, value) in [
             (
                 "线宽",
@@ -517,8 +568,17 @@ impl SettingsView {
                     .child(
                         h_flex()
                             .justify_between()
-                            .child(div().text_xs().child(label))
-                            .child(self.muted(value)),
+                            .child(div().text_size(px(12.)).child(label))
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(rgb(self.palette.bg))
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(value),
+                            ),
                     )
                     .child(Slider::new(state).w_full().disabled(disabled)),
             );
@@ -559,72 +619,90 @@ impl SettingsView {
                     .child(parameters)
                     .child(
                         v_flex()
-                            .w(px(200.))
+                            .w(px(204.))
                             .when(narrow, |el| el.w_full())
                             .flex_shrink_0()
                             .p_3()
                             .gap_2()
-                            .rounded_md()
+                            .rounded(px(10.))
                             .bg(rgb(self.palette.bg))
-                            .border_1()
-                            .border_color(rgb(self.palette.border))
                             .child(self.muted("实时预览"))
                             .child(self.pen_preview(cx))
                             .child(preview_modes),
                     ),
             );
 
-        let logs = self
+        let advanced = self
             .settings_card()
             .child(
-                Button::new("toggle-logs")
+                Button::new("advanced-settings")
                     .ghost()
                     .small()
+                    .w_full()
+                    .justify_start()
                     .disabled(self.modal_open())
-                    .label(if self.logs_expanded {
-                        "▾ 日志"
+                    .icon(if self.advanced_expanded {
+                        IconName::ChevronDown
                     } else {
-                        "▸ 日志"
+                        IconName::ChevronRight
                     })
+                    .label("高级与日志")
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.logs_expanded = !this.logs_expanded;
+                        this.advanced_expanded = !this.advanced_expanded;
                         cx.notify();
                     })),
             )
-            .when(self.logs_expanded, |el| {
+            .when(self.advanced_expanded, |el| {
                 el.child(
-                    h_flex()
-                        .justify_between()
-                        .flex_wrap()
-                        .gap_3()
+                    v_flex()
+                        .pt_4()
+                        .gap_4()
+                        .border_t_1()
+                        .border_color(rgb(self.palette.border))
                         .child(
-                            v_flex()
-                                .gap_1()
-                                .flex_1()
-                                .min_w(px(180.))
-                                .child("日志级别")
-                                .child(self.muted(
-                                    "默认 info；debug 记录执行的动作，日志保存到配置目录。",
-                                )),
-                        )
-                        .child(
-                            div().w(px(150.)).h(px(32.)).flex_shrink_0().child(
-                                Select::new(&self.log_level)
-                                    .cleanable(false)
-                                    .w_full()
-                                    .disabled(disabled),
+                            self.settings_row(
+                                "日志级别",
+                                "默认 info；debug 记录执行的动作，日志保存到配置目录。",
+                                div().w(px(150.)).flex_shrink_0().child(
+                                    Select::new(&self.log_level)
+                                        .cleanable(false)
+                                        .w_full()
+                                        .disabled(disabled),
+                                ),
                             ),
+                        )
+                        .child(self.muted("识别参数和过滤规则可在 config.json 中调整。"))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .child(
+                                    Button::new("open-log")
+                                        .outline()
+                                        .small()
+                                        .disabled(self.modal_open())
+                                        .label("打开日志")
+                                        .on_click(cx.listener(|this, _, _, cx| this.open_log(cx))),
+                                )
+                                .child(
+                                    Button::new("open-config")
+                                        .outline()
+                                        .small()
+                                        .disabled(self.modal_open())
+                                        .label("打开配置目录")
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.open_config(cx)),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("reload-config")
+                                        .outline()
+                                        .small()
+                                        .disabled(disabled)
+                                        .label("重新加载配置")
+                                        .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                                ),
                         ),
-                )
-                .child(
-                    h_flex().child(
-                        Button::new("open-log")
-                            .outline()
-                            .small()
-                            .disabled(self.modal_open())
-                            .label("打开日志")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_log(cx))),
-                    ),
                 )
             });
 
@@ -633,88 +711,46 @@ impl SettingsView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .px_5()
-            .pb_5()
+            .px_6()
+            .pb_6()
             .child(
                 v_flex()
                     .w_full()
-                    .gap_3()
+                    .max_w(px(1040.))
+                    .gap_4()
                     .child(
                         self.settings_section(
-                            "操作",
-                            self.settings_card().child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .flex_wrap()
-                                    .gap_3()
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .child("手势触发键"),
-                                            )
-                                            .child(self.muted("按住绘制，松开执行")),
-                                    )
-                                    .child(
-                                        div().w(px(160.)).h(px(32.)).flex_shrink_0().child(
+                            "基础偏好",
+                            self.settings_card()
+                                .child(
+                                    self.settings_row(
+                                        "手势触发键",
+                                        "按住绘制，松开执行",
+                                        div().w(px(168.)).flex_shrink_0().child(
                                             Select::new(&self.trigger)
                                                 .cleanable(false)
                                                 .w_full()
                                                 .disabled(disabled),
                                         ),
-                                    ),
-                            ),
-                        ),
-                    )
-                    .child(
-                        self.settings_section(
-                            "外观",
-                            self.settings_card().child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .flex_wrap()
-                                    .gap_3()
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .child("界面主题"),
-                                            )
-                                            .child(self.muted("选择你习惯的明暗风格")),
                                     )
-                                    .child(themes),
-                            ),
-                        ),
-                    )
-                    .child(
-                        self.settings_section(
-                            "启动",
-                            self.settings_card().child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .gap_3()
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .child("开机自动启动"),
-                                            )
-                                            .child(
-                                                self.muted(
-                                                    "登录 Windows 后在后台运行，切换立即保存",
-                                                ),
-                                            ),
+                                    .pb_4()
+                                    .border_b_1()
+                                    .border_color(rgb(self.palette.border)),
+                                )
+                                .child(
+                                    self.settings_row(
+                                        "界面主题",
+                                        "选择你习惯的明暗风格，切换立即保存",
+                                        themes,
                                     )
-                                    .child(
+                                    .pb_4()
+                                    .border_b_1()
+                                    .border_color(rgb(self.palette.border)),
+                                )
+                                .child(
+                                    self.settings_row(
+                                        "开机自动启动",
+                                        "登录 Windows 后在后台运行，切换立即保存",
                                         Switch::new("launch-at-startup")
                                             .checked(self.autostart_enabled)
                                             .disabled(
@@ -724,60 +760,11 @@ impl SettingsView {
                                                 this.set_autostart(*checked, cx)
                                             })),
                                     ),
-                            ),
+                                ),
                         ),
                     )
                     .child(self.settings_section("手势轨迹", trail))
-                    .child(logs)
-                    .child(
-                        v_flex()
-                            .gap_3()
-                            .child(
-                                h_flex().child(
-                                    Button::new("advanced-settings")
-                                        .disabled(self.modal_open())
-                                        .ghost()
-                                        .small()
-                                        .label(if self.preference_tools {
-                                            "▾ 高级"
-                                        } else {
-                                            "▸ 高级"
-                                        })
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.preference_tools = !this.preference_tools;
-                                            cx.notify();
-                                        })),
-                                ),
-                            )
-                            .when(self.preference_tools, |el| {
-                                el.child(self.muted("识别参数和过滤规则可在 config.json 中调整。"))
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .flex_wrap()
-                                            .child(
-                                                Button::new("open-config")
-                                                    .outline()
-                                                    .small()
-                                                    .disabled(self.modal_open())
-                                                    .label("打开配置目录")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.open_config(cx)
-                                                    })),
-                                            )
-                                            .child(
-                                                Button::new("reload-config")
-                                                    .outline()
-                                                    .small()
-                                                    .disabled(disabled)
-                                                    .label("重新加载配置")
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.reload(cx)
-                                                    })),
-                                            ),
-                                    )
-                            }),
-                    ),
+                    .child(advanced),
             )
             .into_any_element()
     }
@@ -786,7 +773,7 @@ impl SettingsView {
         let disabled =
             self.controls_blocked() || self.application().is_some_and(|app| app.disabled);
         let rows = self.rows(cx);
-        let mut list = v_flex().gap_1().p_2();
+        let mut list = v_flex().gap_2().p_3();
         if rows.is_empty() {
             list = list.child(div().p_3().child(self.muted(
                 if self.value("search", cx).is_empty() {
@@ -825,12 +812,23 @@ impl SettingsView {
                         "gesture-{}-{}",
                         row.source_package, row.action.id
                     )))
-                    .rounded_md()
-                    .px_3()
-                    .py_2()
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(rgb(if selected {
+                        self.palette.border
+                    } else {
+                        self.palette.panel
+                    }))
+                    .p_2()
                     .cursor_pointer()
                     .when(selected, |el| el.bg(rgb(self.palette.selected)))
-                    .hover(|el| el.bg(rgb(self.palette.hover)))
+                    .hover(|el| {
+                        el.bg(rgb(if selected {
+                            self.palette.selected
+                        } else {
+                            self.palette.hover
+                        }))
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select_row(entry.clone(), window, cx)
                     }))
@@ -863,6 +861,10 @@ impl SettingsView {
                                                     .flex_1()
                                                     .min_w_0()
                                                     .truncate()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .when(selected, |el| {
+                                                        el.text_color(rgb(self.palette.accent))
+                                                    })
                                                     .child(row.action.name.clone()),
                                             )
                                             .when(!row.inherited, |el| {
@@ -901,7 +903,10 @@ impl SettingsView {
                                             .when(row.inherited, |el| {
                                                 el.child(
                                                     div()
-                                                        .text_xs()
+                                                        .text_size(px(11.))
+                                                        .px_1()
+                                                        .rounded_sm()
+                                                        .bg(rgb(self.palette.bg))
                                                         .text_color(rgb(self.palette.muted))
                                                         .child("全局"),
                                                 )
@@ -910,7 +915,7 @@ impl SettingsView {
                                     .child(
                                         div()
                                             .truncate()
-                                            .text_xs()
+                                            .text_size(px(12.))
                                             .text_color(rgb(self.palette.muted))
                                             .child(settings_model::action_summary(
                                                 &row.action.action,
@@ -921,9 +926,9 @@ impl SettingsView {
             );
         }
         v_flex()
-            .w(px(220.))
+            .w(px(240.))
             .max_w(relative(0.42))
-            .min_w(px(180.))
+            .min_w(px(196.))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
@@ -939,7 +944,8 @@ impl SettingsView {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_sm()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .child(format!("手势 · {}", self.rows(cx).len())),
                             )
                             .child(
@@ -990,7 +996,7 @@ impl SettingsView {
     }
 
     fn render_editor(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut editor = v_flex().gap_3().p_4();
+        let mut editor = v_flex().gap_4().p_5();
         let Some(selected) = &self.selected else {
             return div()
                 .id("gesture-editor-scroll")
@@ -1009,18 +1015,22 @@ impl SettingsView {
                     .gap_2()
                     .child(
                         div()
-                            .text_lg()
-                            .font_weight(FontWeight::MEDIUM)
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(18.))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child(self.value("action_name", cx)),
                     )
                     .child(
                         div()
                             .px_2()
                             .py_1()
-                            .rounded_md()
-                            .bg(rgb(self.palette.bg))
-                            .text_xs()
-                            .text_color(rgb(self.palette.muted))
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .bg(rgb(self.palette.selected))
+                            .text_size(px(11.))
+                            .text_color(rgb(self.palette.accent))
                             .child(if selected.inherited {
                                 "继承全局"
                             } else if self.current_scope() == Some("global") {
@@ -1088,6 +1098,8 @@ impl SettingsView {
                         .child(
                             v_flex()
                                 .gap_2()
+                                .flex_1()
+                                .min_w_0()
                                 .child(self.muted(if selected.inherited {
                                     "执行动作"
                                 } else {
@@ -1363,7 +1375,7 @@ impl SettingsView {
     fn render_editor_blocked_modal(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let reason = self.editor_blocked.as_ref()?;
         Some(self.modal_frame().child(
-            v_flex().gap_3().p_5().w(px(440.)).max_w_full().rounded_lg()
+            v_flex().gap_3().p_5().w(px(440.)).max_w_full().flex_shrink_0().rounded_lg()
                 .bg(rgb(self.palette.panel)).border_1().border_color(rgb(self.palette.border))
                 .child(h_flex().gap_2()
                     .child(Icon::new(IconName::TriangleAlert).size(px(22.)).text_color(rgb(self.palette.error)))
@@ -1383,9 +1395,10 @@ impl SettingsView {
         h_flex()
             .gap_3()
             .justify_between()
-            .px_5()
+            .px_6()
             .py_3()
             .flex_shrink_0()
+            .bg(rgb(self.palette.panel))
             .border_t_1()
             .border_color(rgb(self.palette.border))
             .child(
@@ -1394,6 +1407,34 @@ impl SettingsView {
                     .min_w_0()
                     .gap_1()
                     .when(!self.connected, |el| el.child(self.muted("后台未连接")))
+                    .when(self.connected && !self.is_error, |el| {
+                        el.child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Icon::new(if changed {
+                                        IconName::Info
+                                    } else {
+                                        IconName::CircleCheck
+                                    })
+                                    .size(px(14.))
+                                    .text_color(rgb(
+                                        if changed {
+                                            self.palette.accent
+                                        } else {
+                                            self.palette.muted
+                                        },
+                                    )),
+                                )
+                                .child(self.muted(if self.pending {
+                                    "正在处理…"
+                                } else if changed {
+                                    "有未应用的更改"
+                                } else {
+                                    "当前页面已保存"
+                                })),
+                        )
+                    })
                     .when(!self.notice.is_empty() && self.is_error, |el| {
                         el.child(
                             div()
@@ -1410,7 +1451,8 @@ impl SettingsView {
             .child(
                 h_flex().gap_2().flex_shrink_0().child(
                     Button::new("apply-settings")
-                        .small()
+                        .h(px(36.))
+                        .w(px(88.))
                         .primary()
                         .label("应用")
                         .disabled(self.controls_blocked() || !changed)
@@ -1431,6 +1473,7 @@ impl SettingsView {
                         .p_5()
                         .w(px(460.))
                         .max_w_full()
+                        .flex_shrink_0()
                         .rounded_lg()
                         .bg(rgb(self.palette.panel))
                         .border_1()
@@ -1535,6 +1578,7 @@ impl SettingsView {
                         .p_5()
                         .w(px(440.))
                         .max_w_full()
+                        .flex_shrink_0()
                         .rounded_lg()
                         .bg(rgb(self.palette.panel))
                         .border_1()
@@ -1615,15 +1659,17 @@ impl SettingsView {
         )
     }
 
-    fn modal_frame(&self) -> Div {
+    fn modal_frame(&self) -> Stateful<Div> {
         div()
+            .id("settings-modal-scroll")
             .occlude()
             .absolute()
             .inset_0()
             .flex()
             .items_start()
             .justify_center()
-            .pt(px(64.))
+            .overflow_y_scroll()
+            .py_6()
             .px_4()
             .bg(rgba(0x00000066))
     }
@@ -1651,6 +1697,14 @@ impl Render for SettingsView {
         div()
             .relative()
             .size_full()
+            .font(Font {
+                fallbacks: Some(FontFallbacks::from_fonts(vec![
+                    "Microsoft YaHei UI".into(),
+                    "Segoe UI Symbol".into(),
+                ])),
+                ..font("Segoe UI")
+            })
+            .text_size(px(14.))
             .bg(rgb(self.palette.panel))
             .text_color(rgb(self.palette.text))
             .child(
