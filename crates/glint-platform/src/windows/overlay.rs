@@ -417,6 +417,61 @@ impl Drop for Frame {
     }
 }
 
+/// Smooth only the displayed path, in physical pixels. Recognition keeps the raw samples.
+fn trail_path(points: &[Point], origin: Point) -> Option<tiny_skia::Path> {
+    use tiny_skia::PathBuilder;
+
+    // Ignore tiny sample-to-sample jitter, but always retain the current cursor
+    // position so smoothing adds no input delay or trailing gap.
+    let first = *points.first()?;
+    let mut knots = vec![first];
+    for &point in points.iter().skip(1).take(points.len().saturating_sub(2)) {
+        let previous = knots.last().unwrap();
+        if (point.x - previous.x).hypot(point.y - previous.y) >= 2. {
+            knots.push(point);
+        }
+    }
+    let last = *points.last()?;
+    if knots.last() != Some(&last) {
+        knots.push(last);
+    }
+
+    let mut path = PathBuilder::new();
+    let local = |p: Point| ((p.x - origin.x) as f32, (p.y - origin.y) as f32);
+    let (x, y) = local(first);
+    path.move_to(x, y);
+    for triple in knots.windows(3) {
+        let [previous, corner, next] = [triple[0], triple[1], triple[2]];
+        let incoming = (corner.x - previous.x, corner.y - previous.y);
+        let outgoing = (next.x - corner.x, next.y - corner.y);
+        let before = incoming.0.hypot(incoming.1);
+        let after = outgoing.0.hypot(outgoing.1);
+        let (cx, cy) = local(corner);
+        // Keep deliberate reversals at their actual turning point.
+        if incoming.0 * outgoing.0 + incoming.1 * outgoing.1 <= -0.95 * before * after {
+            path.line_to(cx, cy);
+            continue;
+        }
+        // Quadratic joins stay inside the sampled path's bounds. Limit rounding
+        // to 4 px even when a fast movement produces widely spaced samples.
+        let entry = (before * 0.5).min(4.) / before;
+        let exit = (after * 0.5).min(4.) / after;
+        let (x, y) = local(Point {
+            x: corner.x - incoming.0 * entry,
+            y: corner.y - incoming.1 * entry,
+        });
+        path.line_to(x, y);
+        let (x, y) = local(Point {
+            x: corner.x + outgoing.0 * exit,
+            y: corner.y + outgoing.1 * exit,
+        });
+        path.quad_to(cx, cy, x, y);
+    }
+    let (x, y) = local(last);
+    path.line_to(x, y);
+    path.finish()
+}
+
 /// Rasterize coverage into premultiplied BGRA for UpdateLayeredWindow.
 fn rasterize(
     pixels: &mut [u8],
@@ -426,20 +481,10 @@ fn rasterize(
     origin: Point,
     pen: &Pen,
 ) -> Result<()> {
-    use tiny_skia::{LineCap, LineJoin, Paint, PathBuilder, PixmapMut, Stroke, Transform};
+    use tiny_skia::{LineCap, LineJoin, Paint, PixmapMut, Stroke, Transform};
 
     pixels.fill(0);
-    let mut path = PathBuilder::new();
-    for (index, point) in points.iter().enumerate() {
-        let x = (point.x - origin.x) as f32;
-        let y = (point.y - origin.y) as f32;
-        if index == 0 {
-            path.move_to(x, y);
-        } else {
-            path.line_to(x, y);
-        }
-    }
-    let path = path.finish().context("Build trail path")?;
+    let path = trail_path(points, origin).context("Build trail path")?;
     let mut paint = Paint::default();
     paint.set_color_rgba8(
         (pen.rgb >> 16) as u8,
@@ -711,5 +756,108 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn smoothing_reduces_visible_zigzags_and_keeps_cursor_endpoints() {
+        let points: Vec<_> = (0..=56)
+            .map(|i| Point {
+                x: 8. + f64::from(i * 2),
+                y: if i % 2 == 0 { 14. } else { 18. },
+            })
+            .collect();
+        let mut pixels = vec![0; 128 * 32 * 4];
+        rasterize(
+            &mut pixels,
+            128,
+            32,
+            &points,
+            Point::default(),
+            &Pen {
+                rgb: 0xffffff,
+                width: 1.,
+            },
+        )
+        .unwrap();
+        // Measure the rendered centerline, not just the generated control points.
+        // The raw samples swing by 4 px; the visible interior should swing < 2.5 px.
+        let centers: Vec<_> = (16..112)
+            .map(|x| {
+                let (mut weight, mut moment) = (0., 0.);
+                for y in 0..32 {
+                    let alpha = f64::from(pixels[(y * 128 + x) * 4 + 3]);
+                    weight += alpha;
+                    moment += (y as f64 + 0.5) * alpha;
+                }
+                assert!(weight > 0., "gap at x={x}");
+                moment / weight
+            })
+            .collect();
+        let min = centers.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = centers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert!(max - min < 2.5, "centerline variation: {}", max - min);
+
+        use tiny_skia::PathSegment;
+        let path = trail_path(&points, Point::default()).unwrap();
+        assert_eq!(
+            path.segments().next(),
+            Some(PathSegment::MoveTo(tiny_skia::Point::from_xy(8., 14.)))
+        );
+        assert_eq!(
+            path.segments().last(),
+            Some(PathSegment::LineTo(tiny_skia::Point::from_xy(120., 14.)))
+        );
+    }
+
+    #[test]
+    fn smoothing_preserves_short_strokes_duplicates_and_reversals() {
+        use tiny_skia::PathSegment;
+        let start = Point { x: -10., y: -20. };
+        let tip = Point { x: -9.5, y: -19.5 };
+        let path = trail_path(&[start, start, tip, tip], start).unwrap();
+        assert_eq!(
+            path.segments().collect::<Vec<_>>(),
+            vec![
+                PathSegment::MoveTo(tiny_skia::Point::from_xy(0., 0.)),
+                PathSegment::LineTo(tiny_skia::Point::from_xy(0.5, 0.5)),
+            ]
+        );
+        let turn = Point { x: 90., y: -20. };
+        let path = trail_path(&[start, turn, turn, start], start).unwrap();
+        assert_eq!(
+            path.segments().collect::<Vec<_>>(),
+            vec![
+                PathSegment::MoveTo(tiny_skia::Point::from_xy(0., 0.)),
+                PathSegment::LineTo(tiny_skia::Point::from_xy(100., 0.)),
+                PathSegment::LineTo(tiny_skia::Point::from_xy(0., 0.)),
+            ]
+        );
+    }
+
+    #[test]
+    fn sparse_corners_are_only_rounded_locally_without_overshoot() {
+        let path = trail_path(
+            &[
+                Point { x: 10., y: 10. },
+                Point { x: 510., y: 10. },
+                Point { x: 510., y: 510. },
+            ],
+            Point::default(),
+        )
+        .unwrap();
+        let bounds = path.bounds();
+        assert_eq!((bounds.left(), bounds.top()), (10., 10.));
+        assert_eq!((bounds.right(), bounds.bottom()), (510., 510.));
+        // Even a long sampling gap must not turn an L gesture into a broad arc.
+        let segments: Vec<_> = path.segments().collect();
+        assert!(
+            segments.contains(&tiny_skia::PathSegment::LineTo(tiny_skia::Point::from_xy(
+                506., 10.
+            )))
+        );
+        assert!(segments.contains(&tiny_skia::PathSegment::QuadTo(
+            tiny_skia::Point::from_xy(510., 10.),
+            tiny_skia::Point::from_xy(510., 14.)
+        )));
     }
 }
