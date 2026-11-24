@@ -151,7 +151,7 @@ impl SettingsView {
                             .rounded(px(10.))
                             .bg(rgb(self.palette.accent))
                             .text_color(rgb(if self.palette.is_dark {
-                                0x11231A
+                                0x0F1426
                             } else {
                                 0xFFFFFF
                             }))

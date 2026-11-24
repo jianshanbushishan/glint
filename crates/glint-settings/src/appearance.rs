@@ -44,42 +44,42 @@ impl AppearanceExt for Appearance {
         window.defer(cx, move |window, _| update_titlebar(window, dark));
         let palette = if dark {
             Palette {
-                bg: 0x111614,
-                sidebar: 0x151B18,
-                panel: 0x1A221E,
-                elevated: 0x222D27,
-                border: 0x2D3C34,
-                border_subtle: 0x232F28,
-                accent: 0x62D9A9,
-                accent_border: 0x2F6B54,
-                text: 0xEAF2EE,
-                muted: 0x8FA69B,
-                selected: 0x1E352B,
-                hover: 0x212D27,
-                error: 0xFF8A80,
-                error_bg: 0x2C1A19,
-                error_border: 0x5C2B28,
-                warning: 0xF0B429,
+                bg: 0x111318,
+                sidebar: 0x151820,
+                panel: 0x1A1E28,
+                elevated: 0x222836,
+                border: 0x2D3548,
+                border_subtle: 0x232A39,
+                accent: 0x748FFC,
+                accent_border: 0x3B4D8C,
+                text: 0xECEFF6,
+                muted: 0x8E98AE,
+                selected: 0x202945,
+                hover: 0x222836,
+                error: 0xFF8787,
+                error_bg: 0x2D1B1E,
+                error_border: 0x612F35,
+                warning: 0xF5B841,
                 is_dark: true,
             }
         } else {
             Palette {
-                bg: 0xF4F7F5,
-                sidebar: 0xF9FBFA,
+                bg: 0xF5F6F9,
+                sidebar: 0xFAFBFD,
                 panel: 0xFFFFFF,
-                elevated: 0xEFF4F1,
-                border: 0xDCE5E0,
-                border_subtle: 0xE9EFEA,
-                accent: 0x067A57,
-                accent_border: 0x8ED4B9,
-                text: 0x16241D,
-                muted: 0x5D7166,
-                selected: 0xE4F4EC,
-                hover: 0xECF2EE,
-                error: 0xC42B1C,
-                error_bg: 0xFDF2F1,
-                error_border: 0xF3C5C0,
-                warning: 0xC27803,
+                elevated: 0xEEF1F6,
+                border: 0xDDE2EC,
+                border_subtle: 0xEAEEF5,
+                accent: 0x3B5BDB,
+                accent_border: 0xB1C3F8,
+                text: 0x171C28,
+                muted: 0x636E83,
+                selected: 0xEBF0FE,
+                hover: 0xF1F4F9,
+                error: 0xD9383A,
+                error_bg: 0xFEF2F2,
+                error_border: 0xF8CACA,
+                warning: 0xC97A10,
                 is_dark: false,
             }
         };
@@ -97,9 +97,9 @@ impl AppearanceExt for Appearance {
         theme.border = rgb(palette.border).into();
         theme.input = rgb(palette.border).into();
         theme.primary = rgb(palette.accent).into();
-        theme.primary_hover = rgb(if dark { 0x94E8C3 } else { 0x066A4B }).into();
-        theme.primary_active = rgb(if dark { 0x52C99A } else { 0x05563D }).into();
-        theme.primary_foreground = rgb(if dark { 0x11231A } else { 0xFFFFFF }).into();
+        theme.primary_hover = rgb(if dark { 0x91A7FF } else { 0x324EC2 }).into();
+        theme.primary_active = rgb(if dark { 0x5C7CFA } else { 0x2940A3 }).into();
+        theme.primary_foreground = rgb(if dark { 0x0F1426 } else { 0xFFFFFF }).into();
         theme.secondary = rgb(palette.bg).into();
         theme.secondary_foreground = rgb(palette.text).into();
         theme.secondary_hover = rgb(palette.hover).into();
@@ -113,7 +113,7 @@ impl AppearanceExt for Appearance {
         theme.list_active_border = rgb(palette.accent).into();
         theme.popover = rgb(palette.panel).into();
         theme.popover_foreground = rgb(palette.text).into();
-        theme.switch = rgb(if dark { 0x4B6053 } else { 0xB6C8BC }).into();
+        theme.switch = rgb(if dark { 0x465066 } else { 0xC2CAD8 }).into();
         theme.switch_thumb = rgb(0xFFFFFF).into();
         theme.slider_bar = rgb(palette.accent).into();
         theme.slider_thumb = rgb(palette.panel).into();
