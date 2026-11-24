@@ -4,7 +4,7 @@ use super::*;
 use crate::appearance::AppearanceExt;
 use crate::settings_model::{
     GestureRow, WINDOW_OPERATION_IDS as OPERATION_IDS, action_summary, format_launch_args,
-    gesture_label, gesture_rows, join_gesture, parse_launch_args, split_gesture,
+    gesture_label, gesture_label_in, gesture_rows, join_gesture, parse_launch_args, split_gesture,
     window_operation_index,
 };
 use glint_core::{ApplicationProfile, LogLevel, LoggingConfig, Package};
@@ -90,6 +90,8 @@ pub(super) struct SettingsView {
     connected: bool,
     #[cfg(windows)]
     engine_process: Option<engine_process::EngineProcess>,
+    #[cfg(windows)]
+    engine_watch_failed: bool,
     config: Option<Config>,
     status: Status,
     notice: String,
@@ -256,16 +258,30 @@ impl SettingsView {
                 },
             ));
         }
-        for entity in [&action_type, &window_operation, &extra] {
+        subscriptions.push(cx.subscribe_in(
+            &action_type,
+            window,
+            |this, _, event: &SelectEvent<Vec<&'static str>>, window, cx| {
+                if matches!(event, SelectEvent::Confirm(_)) && !this.loading {
+                    if this.selected_type(cx) != "keys" {
+                        this.recording_shortcut = false;
+                        this.shortcut_candidate = None;
+                    }
+                    this.loading = true;
+                    this.set("action_value", "", window, cx);
+                    this.set("action_args", "", window, cx);
+                    this.loading = false;
+                    this.editor_dirty = true;
+                    cx.notify();
+                }
+            },
+        ));
+        for entity in [&window_operation, &extra] {
             subscriptions.push(cx.subscribe_in(
                 entity,
                 window,
                 |this, _, event: &SelectEvent<Vec<&'static str>>, _, cx| {
                     if matches!(event, SelectEvent::Confirm(_)) && !this.loading {
-                        if this.selected_type(cx) != "keys" {
-                            this.recording_shortcut = false;
-                            this.shortcut_candidate = None;
-                        }
                         this.editor_dirty = true;
                         cx.notify();
                     }
@@ -338,32 +354,65 @@ impl SettingsView {
                 return;
             }
             let _ = weak.update(cx, |this, cx| {
-                if !this.recording_shortcut
-                    || this.editor_blocked.is_some()
-                    || window.has_active_dialog(cx)
-                {
+                if window.has_active_dialog(cx) {
                     return;
                 }
-                window.prevent_default();
-                cx.stop_propagation();
                 let key = &event.keystroke;
+                if this.recording_shortcut && this.editor_blocked.is_none() {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    if key.key == "escape"
+                        && !key.modifiers.control
+                        && !key.modifiers.alt
+                        && !key.modifiers.shift
+                        && !key.modifiers.platform
+                    {
+                        this.cancel_shortcut(cx);
+                        return;
+                    }
+                    match shortcut_string(key) {
+                        Ok(value) => {
+                            this.shortcut_candidate = Some(value);
+                            this.notice = "请确认快捷键，或继续按键重新录入；Esc 取消".into();
+                        }
+                        Err(error) => this.error(error, cx),
+                    }
+                    cx.notify();
+                    return;
+                }
                 if key.key == "escape"
                     && !key.modifiers.control
                     && !key.modifiers.alt
                     && !key.modifiers.shift
                     && !key.modifiers.platform
                 {
-                    this.cancel_shortcut(cx);
+                    if this.editor_blocked.is_some() {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        this.dismiss_editor_blocked(cx);
+                    } else if this.app_dialog.is_some() {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        this.cancel_app_dialog(cx);
+                    } else if this.recording.is_some() {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        this.cancel_recording(cx);
+                    }
                     return;
                 }
-                match shortcut_string(key) {
-                    Ok(value) => {
-                        this.shortcut_candidate = Some(value);
-                        this.notice = "请确认快捷键，或继续按键重新录入；Esc 取消".into();
-                    }
-                    Err(error) => this.error(error, cx),
+                if key.key.eq_ignore_ascii_case("s")
+                    && key.modifiers.control
+                    && !key.modifiers.alt
+                    && !key.modifiers.shift
+                    && !key.modifiers.platform
+                    && this.current_dirty()
+                    && !this.controls_blocked()
+                {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    this.save_current(cx);
                 }
-                cx.notify();
             });
         }));
         let weak = cx.entity().downgrade();
@@ -375,14 +424,15 @@ impl SettingsView {
                 }
                 if !this.has_pending_changes() {
                     if this.recording.is_some() {
-                        let _ = this.tx.send(Job::Command(Command::CancelRecording));
+                        let _ = glint_ipc::request(&this.dir, Command::CancelRecording);
                     }
                     return true;
                 }
                 if !window.has_active_dialog(cx) {
-                    let tx = this.tx.clone();
+                    let dir = this.dir.clone();
+                    let has_recording = this.recording.is_some();
                     window.open_dialog(cx, move |dialog, _, _| {
-                        let tx = tx.clone();
+                        let dir = dir.clone();
                         dialog
                             .title("尚未保存的修改")
                             .child("部分修改尚未保存，关闭后将放弃这些修改。")
@@ -393,7 +443,9 @@ impl SettingsView {
                                     .cancel_text("继续编辑"),
                             )
                             .on_ok(move |_, window, cx| {
-                                let _ = tx.send(Job::Command(Command::CancelRecording));
+                                if has_recording {
+                                    let _ = glint_ipc::request(&dir, Command::CancelRecording);
+                                }
                                 window.defer(cx, |window, _| window.remove_window());
                                 true
                             })
@@ -427,6 +479,8 @@ impl SettingsView {
             connected: false,
             #[cfg(windows)]
             engine_process: None,
+            #[cfg(windows)]
+            engine_watch_failed: false,
             config: None,
             status: Status::default(),
             notice: settings_error.clone().unwrap_or_else(|| {
@@ -520,6 +574,9 @@ impl SettingsView {
     }
     fn application(&self) -> Option<ApplicationProfile> {
         let id = self.current_scope()?;
+        self.application_by_id(id)
+    }
+    fn application_by_id(&self, id: &str) -> Option<ApplicationProfile> {
         self.scope_drafts
             .get(id)
             .and_then(|d| d.application.clone())
@@ -615,6 +672,13 @@ impl SettingsView {
             self.application().is_none_or(|a| a.inherit_global),
         )
     }
+    fn gesture_label(&self, gesture: &str) -> String {
+        if let Some(config) = &self.config {
+            gesture_label_in(gesture, &config.gestures)
+        } else {
+            gesture_label(gesture)
+        }
+    }
     fn rows(&self, cx: &App) -> Vec<GestureRow> {
         let search = self.value("search", cx).to_lowercase();
         let mut rows = self.all_rows();
@@ -643,7 +707,7 @@ impl SettingsView {
                     || format!(
                         "{} {} {}",
                         r.action.name,
-                        gesture_label(&r.action.gesture),
+                        self.gesture_label(&r.action.gesture),
                         action_summary(&r.action.action)
                     )
                     .to_lowercase()
@@ -765,7 +829,7 @@ impl SettingsView {
                     window,
                     cx,
                 );
-                (1, operation.clone(), String::new())
+                (1, String::new(), String::new())
             }
             ActionKind::Launch { program, args } => (2, program.clone(), format_launch_args(args)),
         };
@@ -1085,7 +1149,13 @@ impl SettingsView {
                         {
                             draft.removed.push(row.action.id.clone());
                         }
-                        draft.dirty = true;
+                        draft.dirty = draft.application.is_some()
+                            || !draft.upserts.is_empty()
+                            || !draft.removed.is_empty();
+                        let remaining_dirty = draft.dirty;
+                        if !remaining_dirty {
+                            this.scope_drafts.remove(&scope);
+                        }
                         if this.current_scope() == Some(scope.as_str())
                             && this.selected.as_ref().is_some_and(|selected| {
                                 selected.source_package == row.source_package
@@ -1096,7 +1166,11 @@ impl SettingsView {
                             this.select_first(window, cx);
                         }
                         this.is_error = false;
-                        this.notice = "修改点击“应用”后生效".into();
+                        this.notice = if remaining_dirty {
+                            "修改点击“应用”后生效".into()
+                        } else {
+                            "已移除未保存的手势".into()
+                        };
                         cx.notify();
                     });
                     true
@@ -1234,17 +1308,20 @@ impl SettingsView {
             }
         };
         let id = dialog.id.clone().unwrap_or_else(|| fresh_id("app"));
-        let all_apps = self
+        let mut all_apps = self
             .config
             .as_ref()
             .map(|c| c.applications.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .chain(
-                self.scope_drafts
-                    .values()
-                    .filter_map(|d| d.application.clone()),
-            );
+            .unwrap_or_default();
+        for draft in self.scope_drafts.values() {
+            if let Some(app) = &draft.application {
+                if let Some(current) = all_apps.iter_mut().find(|a| a.id == app.id) {
+                    *current = app.clone();
+                } else {
+                    all_apps.push(app.clone());
+                }
+            }
+        }
         if all_apps
             .into_iter()
             .any(|a| a.id != id && a.process_path.eq_ignore_ascii_case(&path))
@@ -1366,6 +1443,12 @@ impl SettingsView {
             return;
         }
         let dialog_generation = self.app_dialog.as_ref().map(|d| d.generation.clone());
+        let target_action = (!for_application).then(|| {
+            (
+                self.current_scope().map(str::to_owned),
+                self.selected.as_ref().map(|r| r.action.id.clone()),
+            )
+        });
         let pick = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -1378,6 +1461,24 @@ impl SettingsView {
             {
                 let path = path.clone();
                 let _ = this.update_in(cx, |this, window, cx| {
+                    if for_application {
+                        if this.app_dialog.as_ref().map(|d| &d.generation)
+                            != dialog_generation.as_ref()
+                        {
+                            return;
+                        }
+                    } else {
+                        let current = (
+                            this.current_scope().map(str::to_owned),
+                            this.selected.as_ref().map(|r| r.action.id.clone()),
+                        );
+                        if target_action.as_ref() != Some(&current)
+                            || !this.is_editable()
+                            || this.selected_type(cx) != "launch"
+                        {
+                            return;
+                        }
+                    }
                     if !path
                         .extension()
                         .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
@@ -1386,11 +1487,6 @@ impl SettingsView {
                         return;
                     }
                     if for_application {
-                        if this.app_dialog.as_ref().map(|d| &d.generation)
-                            != dialog_generation.as_ref()
-                        {
-                            return;
-                        }
                         this.set("app_path", path.display().to_string(), window, cx);
                         if this.value("app_name", cx).is_empty() {
                             this.set(
@@ -1518,7 +1614,10 @@ impl SettingsView {
                         } else {
                             this.scope_drafts.remove(&id);
                             this.editor_dirty = false;
+                            this.editor_blocked = None;
                             this.page = Page::Scope("global".into());
+                            this.set("search", "", window, cx);
+                            this.sync_fallback(window, cx);
                             this.select_first(window, cx);
                             this.is_error = false;
                             this.notice = "已删除应用手势".into();
@@ -1702,7 +1801,7 @@ impl SettingsView {
                 .items_center()
                 .justify_center()
                 .text_xs()
-                .child(gesture_label(&base))
+                .child(self.gesture_label(&base))
                 .into_any_element()
         }
     }
@@ -1710,7 +1809,7 @@ impl SettingsView {
         let pen = self.pen(cx);
         div()
             .w_full()
-            .h(px((pen.width * 3. + 60.).max(90.)))
+            .h(px(124.))
             .opacity(pen.opacity)
             .child(preview(
                 GestureTemplate {
@@ -1786,21 +1885,31 @@ impl SettingsView {
         }
         let mut changed = false;
         while let Ok(reply) = self.rx.try_recv() {
-            changed = true;
             if !reply.passive {
-                self.pending = false;
+                if self.pending {
+                    self.pending = false;
+                }
+                changed = true;
             }
             match reply.result {
                 Err(error) => {
-                    self.connected = false;
+                    if self.connected {
+                        self.connected = false;
+                        changed = true;
+                    }
                     if !reply.passive || !self.is_error {
                         self.error(format!("后台未连接 · {error}"), cx);
+                        changed = true;
                     }
                 }
                 Ok(response) => {
-                    self.connected = true;
+                    if !self.connected {
+                        self.connected = true;
+                        changed = true;
+                    }
                     if !response.ok {
                         self.error(response.message, cx);
+                        changed = true;
                         continue;
                     }
                     if !reply.passive {
@@ -1831,7 +1940,9 @@ impl SettingsView {
                             Some(Command::RemoveApplication { package_id }) => {
                                 self.scope_drafts.remove(package_id);
                                 self.editor_dirty = false;
+                                self.editor_blocked = None;
                                 self.page = Page::Scope("global".into());
+                                self.set("search", "", window, cx);
                                 self.selected = None;
                                 self.refresh_selection = true;
                             }
@@ -1841,6 +1952,7 @@ impl SettingsView {
                     if let Some(status) = response.status {
                         #[cfg(windows)]
                         if self.engine_process.is_none()
+                            && !self.engine_watch_failed
                             && let Some(pid) = status.engine_pid
                         {
                             match engine_process::EngineProcess::open(pid) {
@@ -1849,41 +1961,71 @@ impl SettingsView {
                                     cx.quit();
                                     return;
                                 }
-                                Err(error) => self.error(format!("无法监测后台退出：{error}"), cx),
+                                Err(error) => {
+                                    self.engine_watch_failed = true;
+                                    self.error(format!("无法监测后台退出：{error}"), cx);
+                                    changed = true;
+                                }
                             }
                         }
-                        self.status = status;
+                        if self.status != status {
+                            self.status = status;
+                            changed = true;
+                        }
                     }
                     if let Some(config) = response.config {
-                        glint_core::logging::set_level(config.logging.level);
-                        let preferences_changed = self.config.as_ref().is_none_or(|previous| {
-                            previous.logging.level != config.logging.level
-                                || previous.stroke_button != config.stroke_button
-                                || previous.pen.color != config.pen.color
-                                || previous.pen.invalid_color != config.pen.invalid_color
-                                || previous.pen.width != config.pen.width
-                                || previous.pen.opacity != config.pen.opacity
-                        });
-                        if !self.prefs_loaded || (!self.general_dirty && preferences_changed) {
-                            self.load_preferences(&config, window, cx);
-                        }
-                        if let Some(recording) = &mut self.recording {
-                            recording.ready = config.gestures.iter().any(|g| g.id == recording.id);
-                        }
-                        self.config = Some(config);
-                        if self.selected.is_none() || self.refresh_selection {
-                            let id = self.selected.as_ref().map(|r| r.action.id.clone());
-                            if let Some(row) = self
-                                .all_rows()
-                                .into_iter()
-                                .find(|r| Some(&r.action.id) == id.as_ref())
-                            {
-                                self.load_row(row, window, cx);
-                            } else {
-                                self.select_first(window, cx);
+                        let config_changed = self.config.as_ref() != Some(&config);
+                        let gestures_changed = self
+                            .config
+                            .as_ref()
+                            .is_none_or(|previous| previous.gestures != config.gestures);
+                        if config_changed || !self.prefs_loaded || self.refresh_selection {
+                            glint_core::logging::set_level(config.logging.level);
+                            let preferences_changed = self.config.as_ref().is_none_or(|previous| {
+                                previous.logging.level != config.logging.level
+                                    || previous.stroke_button != config.stroke_button
+                                    || previous.pen.color != config.pen.color
+                                    || previous.pen.invalid_color != config.pen.invalid_color
+                                    || previous.pen.width != config.pen.width
+                                    || previous.pen.opacity != config.pen.opacity
+                            });
+                            if !self.prefs_loaded || (!self.general_dirty && preferences_changed) {
+                                self.load_preferences(&config, window, cx);
+                                changed = true;
                             }
-                            self.refresh_selection = false;
-                            self.sync_fallback(window, cx);
+                            if let Some(recording) = &mut self.recording {
+                                let ready = config.gestures.iter().any(|g| g.id == recording.id);
+                                if recording.ready != ready {
+                                    recording.ready = ready;
+                                    changed = true;
+                                }
+                            }
+                            if config_changed {
+                                self.config = Some(config);
+                                changed = true;
+                            }
+                            if self.current_scope().is_some()
+                                && (self.selected.is_none() || self.refresh_selection)
+                            {
+                                let id = self.selected.as_ref().map(|r| r.action.id.clone());
+                                if let Some(row) = self
+                                    .all_rows()
+                                    .into_iter()
+                                    .find(|r| Some(&r.action.id) == id.as_ref())
+                                {
+                                    self.load_row(row, window, cx);
+                                } else {
+                                    self.select_first(window, cx);
+                                }
+                                self.refresh_selection = false;
+                                self.sync_fallback(window, cx);
+                                changed = true;
+                            } else if gestures_changed {
+                                self.loading = true;
+                                self.sync_template(window, cx);
+                                self.loading = false;
+                                changed = true;
+                            }
                         }
                     }
                 }

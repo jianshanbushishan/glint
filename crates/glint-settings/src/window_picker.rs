@@ -130,6 +130,9 @@ mod native {
                     return Err(std::io::Error::last_os_error()).context("无法复制选择光标");
                 }
                 if unsafe { SetSystemCursor(replacement, id) } == 0 {
+                    unsafe {
+                        DestroyCursor(replacement);
+                    }
                     return Err(std::io::Error::last_os_error()).context("无法设置选择光标");
                 }
             }
@@ -143,7 +146,9 @@ mod native {
         fn drop(&mut self) {
             for (id, cursor) in self.0.drain(..) {
                 unsafe {
-                    SetSystemCursor(cursor, id);
+                    if SetSystemCursor(cursor, id) == 0 {
+                        DestroyCursor(cursor);
+                    }
                 }
             }
             unsafe {

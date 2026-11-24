@@ -2,16 +2,19 @@ use crate::{GestureTemplate, Point};
 use std::sync::Arc;
 
 const SAMPLES: usize = 64;
+const DESCRIPTOR_LEN: usize = SAMPLES - 2;
+pub(crate) type DirectionDescriptor = [(f64, f64); DESCRIPTOR_LEN];
 
 /// Cached direction descriptors for arc-length cuts and original vertices.
-pub(crate) struct PrefixDescriptors(Vec<Vec<(f64, f64)>>);
+pub(crate) struct PrefixDescriptors(Box<[DirectionDescriptor]>);
 
 impl PrefixDescriptors {
     pub(crate) fn new(points: &[Point]) -> Self {
         if directions(points).is_none() {
-            return Self(Vec::new());
+            return Self(Box::new([]));
         }
-        let mut lengths = vec![0.0];
+        let mut lengths = Vec::with_capacity(points.len());
+        lengths.push(0.0);
         for pair in points.windows(2) {
             lengths.push(
                 lengths.last().unwrap() + (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y),
@@ -48,47 +51,42 @@ impl PrefixDescriptors {
         cuts.extend((1..=20).map(|i| total * 0.5_f64.powi(i)));
         cuts.sort_by(f64::total_cmp);
         cuts.dedup();
-        let mut descriptors: Vec<Vec<(f64, f64)>> = Vec::new();
+        let mut descriptors: Vec<DirectionDescriptor> = Vec::new();
+        let mut sampled = [Point { x: 0.0, y: 0.0 }; SAMPLES + 1];
         for cut in cuts {
             if cut < 1e-8 {
                 continue;
             }
             // Binary arc lookup avoids rescanning or copying the recorded polyline
             // for every prefix. Each descriptor uses the completed scorer's window.
-            let sampled: Vec<_> = (0..=SAMPLES)
-                .map(|i| {
-                    let target = cut * i as f64 / SAMPLES as f64;
-                    let segment = lengths
-                        .partition_point(|&length| length <= target)
-                        .max(1)
-                        .min(points.len() - 1);
-                    let span = lengths[segment] - lengths[segment - 1];
-                    let ratio = if span > 1e-9 {
-                        ((target - lengths[segment - 1]) / span).clamp(0.0, 1.0)
-                    } else {
-                        1.0
-                    };
-                    let a = points[segment - 1];
-                    let b = points[segment];
-                    Point {
-                        x: a.x + (b.x - a.x) * ratio,
-                        y: a.y + (b.y - a.y) * ratio,
-                    }
-                })
-                .collect();
-            let descriptor: Vec<_> = sampled
-                .windows(4)
-                .map(|p| {
-                    let dx = p[3].x - p[0].x;
-                    let dy = p[3].y - p[0].y;
-                    let norm = dx.hypot(dy);
-                    if norm > cut * 1e-10 {
-                        (dx / norm, dy / norm)
-                    } else {
-                        (0.0, 0.0)
-                    }
-                })
-                .collect();
+            for (i, slot) in sampled.iter_mut().enumerate() {
+                let target = cut * i as f64 / SAMPLES as f64;
+                let segment = lengths
+                    .partition_point(|&length| length <= target)
+                    .max(1)
+                    .min(points.len() - 1);
+                let span = lengths[segment] - lengths[segment - 1];
+                let ratio = if span > 1e-9 {
+                    ((target - lengths[segment - 1]) / span).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let a = points[segment - 1];
+                let b = points[segment];
+                *slot = Point {
+                    x: a.x + (b.x - a.x) * ratio,
+                    y: a.y + (b.y - a.y) * ratio,
+                };
+            }
+            let mut descriptor = [(0.0, 0.0); DESCRIPTOR_LEN];
+            for (slot, p) in descriptor.iter_mut().zip(sampled.windows(4)) {
+                let dx = p[3].x - p[0].x;
+                let dy = p[3].y - p[0].y;
+                let norm = dx.hypot(dy);
+                if norm > cut * 1e-10 {
+                    *slot = (dx / norm, dy / norm);
+                }
+            }
             // Adjacent straight prefixes are identical, and need only one entry.
             if descriptors.last().is_none_or(|previous| {
                 previous
@@ -99,7 +97,7 @@ impl PrefixDescriptors {
                 descriptors.push(descriptor);
             }
         }
-        Self(descriptors)
+        Self(descriptors.into_boxed_slice())
     }
 }
 
@@ -111,6 +109,8 @@ pub struct PrefixTracker {
     threshold: f32,
     min_distance: f64,
     points: Vec<Point>,
+    cleaned: Vec<Point>,
+    cumulative: Vec<f64>,
     last: Option<Point>,
     distance: f64,
     next_check: f64,
@@ -132,7 +132,9 @@ impl PrefixTracker {
             } else {
                 0.0
             },
-            points: Vec::new(),
+            points: Vec::with_capacity(64),
+            cleaned: Vec::with_capacity(64),
+            cumulative: Vec::with_capacity(64),
             last: None,
             distance: 0.0,
             next_check: 8.0,
@@ -182,12 +184,15 @@ impl PrefixTracker {
                 (checkpoint.x - origin.x).hypot(checkpoint.y - origin.y) >= self.min_distance;
             self.append(checkpoint);
             if self.active {
-                if let Some(sample) = directions(&self.points) {
+                if let Some(sample) =
+                    directions_with_scratch(&self.points, &mut self.cleaned, &mut self.cumulative)
+                {
+                    let threshold = self.threshold;
                     self.candidates.retain(|candidate| {
                         candidate
                             .0
                             .iter()
-                            .any(|reference| direction_score(&sample, reference) >= self.threshold)
+                            .any(|reference| direction_score(&sample, reference) >= threshold)
                     });
                 } else {
                     self.candidates.clear();
@@ -222,41 +227,57 @@ impl PrefixTracker {
     }
 }
 
-pub(crate) fn direction_score(sample: &[(f64, f64)], reference: &[(f64, f64)]) -> f32 {
+pub(crate) fn direction_score(
+    sample: &DirectionDescriptor,
+    reference: &DirectionDescriptor,
+) -> f32 {
     (sample
         .iter()
         .zip(reference)
         .map(|(a, b)| a.0 * b.0 + a.1 * b.1)
         .sum::<f64>()
-        / sample.len() as f64)
+        / DESCRIPTOR_LEN as f64)
         .clamp(0.0, 1.0) as f32
 }
 
 /// Direction vectors sampled at equal arc-length intervals. Translation and
 /// uniform scale are deliberately ignored; direction and rotation are retained.
-pub(crate) fn directions(points: &[Point]) -> Option<Vec<(f64, f64)>> {
+pub(crate) fn directions(points: &[Point]) -> Option<DirectionDescriptor> {
+    let mut cleaned = Vec::with_capacity(points.len());
+    let mut cumulative = Vec::with_capacity(points.len());
+    directions_with_scratch(points, &mut cleaned, &mut cumulative)
+}
+
+fn directions_with_scratch(
+    points: &[Point],
+    cleaned: &mut Vec<Point>,
+    cumulative: &mut Vec<f64>,
+) -> Option<DirectionDescriptor> {
     if points.len() < 2 || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
         return None;
     }
-    let mut cleaned = vec![points[0]];
+    cleaned.clear();
+    cumulative.clear();
+    cleaned.push(points[0]);
+    cumulative.push(0.0);
+    let mut total = 0.0;
+    let mut last = points[0];
     for &point in &points[1..] {
-        let last = cleaned.last()?;
-        if (point.x - last.x).hypot(point.y - last.y) > 1e-9 {
+        let distance = (point.x - last.x).hypot(point.y - last.y);
+        if distance > 1e-9 {
+            total += distance;
             cleaned.push(point);
+            cumulative.push(total);
+            last = point;
         }
     }
-    let mut cumulative = vec![0.0];
-    for pair in cleaned.windows(2) {
-        let distance = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
-        cumulative.push(cumulative.last()? + distance);
-    }
-    let length = *cumulative.last()?;
+    let length = total;
     if !length.is_finite() || length < 1e-8 {
         return None;
     }
-    let mut resampled = Vec::with_capacity(SAMPLES + 1);
+    let mut resampled = [Point { x: 0.0, y: 0.0 }; SAMPLES + 1];
     let mut segment = 1;
-    for i in 0..=SAMPLES {
+    for (i, slot) in resampled.iter_mut().enumerate() {
         let target = length * i as f64 / SAMPLES as f64;
         while segment + 1 < cumulative.len() && cumulative[segment] < target {
             segment += 1;
@@ -266,22 +287,20 @@ pub(crate) fn directions(points: &[Point]) -> Option<Vec<(f64, f64)>> {
             .clamp(0.0, 1.0);
         let a = cleaned[segment - 1];
         let b = cleaned[segment];
-        resampled.push(Point {
+        *slot = Point {
             x: a.x + (b.x - a.x) * ratio,
             y: a.y + (b.y - a.y) * ratio,
-        });
+        };
     }
     // A small fixed window limits the influence of sub-pixel mouse jitter.
-    let mut result = Vec::with_capacity(SAMPLES - 2);
-    for pair in resampled.windows(4) {
+    let mut result = [(0.0, 0.0); DESCRIPTOR_LEN];
+    for (slot, pair) in result.iter_mut().zip(resampled.windows(4)) {
         let dx = pair[3].x - pair[0].x;
         let dy = pair[3].y - pair[0].y;
         let norm = dx.hypot(dy);
-        result.push(if norm > length * 1e-10 {
-            (dx / norm, dy / norm)
-        } else {
-            (0.0, 0.0)
-        });
+        if norm > length * 1e-10 {
+            *slot = (dx / norm, dy / norm);
+        }
     }
     Some(result)
 }

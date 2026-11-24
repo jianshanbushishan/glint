@@ -301,7 +301,10 @@ impl Engine {
             let Some(config) = &self.config else {
                 return false;
             };
-            if button != config.button || self.recording_pending || (self.paused && !self.recording)
+            if button != config.button
+                || self.recording_pending
+                || (self.paused && !self.recording)
+                || TRAY_MENU_OPEN.with(|open| open.get())
             {
                 return false;
             }
@@ -457,6 +460,7 @@ fn apply_requests() {
     let Some(receiver) = receiver else { return };
     for request in receiver.try_iter() {
         let mut exit = false;
+        let mut tray_update: Option<(HWND, bool)> = None;
         let applied = ENGINE.with(|slot| {
             let mut slot = slot.borrow_mut();
             let Some(engine) = slot.as_mut() else {
@@ -468,9 +472,7 @@ fn apply_requests() {
                 Command::Pause(paused) => {
                     engine.paused = paused;
                     PAUSED.with(|s| s.set(paused));
-                    if let Err(error) = Tray::update(engine.tray_window, paused) {
-                        engine.error(error);
-                    }
+                    tray_update = Some((engine.tray_window, paused));
                 }
                 Command::Record(recording) => {
                     engine.recording = recording;
@@ -480,6 +482,17 @@ fn apply_requests() {
             }
             true
         });
+        // Call Shell_NotifyIconW outside ENGINE.borrow_mut() so re-entrant
+        // WH_MOUSE_LL callbacks during Explorer IPC can still observe button releases.
+        if let Some((tray_window, paused)) = tray_update
+            && let Err(error) = Tray::update(tray_window, paused)
+        {
+            ENGINE.with(|slot| {
+                if let Some(engine) = slot.borrow_mut().as_mut() {
+                    engine.error(error);
+                }
+            });
+        }
         let _ = request.done.try_send(if applied {
             Ok(())
         } else {
@@ -622,24 +635,35 @@ fn context_at(point: Point) -> Result<GestureContext> {
         if process.is_null() {
             return Err(native_error("Open gesture target process"));
         }
-        let mut path = vec![0u16; 32768];
-        let mut length = path.len() as u32;
-        let ok = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut length);
-        let error = if ok == 0 {
-            Some(native_error("Read gesture target process path"))
+        let mut stack_path = [0u16; 512];
+        let mut length = stack_path.len() as u32;
+        let process_path = if QueryFullProcessImageNameW(
+            process,
+            0,
+            stack_path.as_mut_ptr(),
+            &mut length,
+        ) != 0
+        {
+            Ok(String::from_utf16_lossy(&stack_path[..length as usize]))
+        } else if GetLastError() == ERROR_INSUFFICIENT_BUFFER {
+            let mut heap_path = vec![0u16; 32768];
+            let mut heap_len = heap_path.len() as u32;
+            if QueryFullProcessImageNameW(process, 0, heap_path.as_mut_ptr(), &mut heap_len) != 0 {
+                Ok(String::from_utf16_lossy(&heap_path[..heap_len as usize]))
+            } else {
+                Err(native_error("Read gesture target process path"))
+            }
         } else {
-            None
+            Err(native_error("Read gesture target process path"))
         };
         CloseHandle(process);
-        if let Some(error) = error {
-            return Err(error);
-        }
-        let mut title = vec![0u16; 1024];
+        let process = process_path?;
+        let mut title = [0u16; 256];
         let title_length =
             GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32).max(0) as usize;
         Ok(GestureContext {
             window: window as usize as u64,
-            process: String::from_utf16_lossy(&path[..length as usize]),
+            process,
             title: String::from_utf16_lossy(&title[..title_length]),
             start: point,
             modifiers: 0,
@@ -938,6 +962,13 @@ unsafe extern "system" fn tray_proc(
             if TRAY_MENU_OPEN.with(|open| open.replace(true)) {
                 return 0;
             }
+            ENGINE.with(|slot| {
+                if let Ok(mut slot) = slot.try_borrow_mut()
+                    && let Some(engine) = slot.as_mut()
+                {
+                    engine.cancel();
+                }
+            });
             unsafe {
                 let label = if PAUSED.with(|s| s.get()) {
                     "恢复鼠标手势"

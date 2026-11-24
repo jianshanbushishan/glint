@@ -55,7 +55,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub running: bool,
     #[serde(default)]
@@ -151,6 +151,7 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> anyhow::Result<()> {
     file.as_file().sync_all()?;
     let temporary = file.into_temp_path();
     std::fs::rename(&temporary, path)?;
+    std::mem::forget(temporary);
     Ok(())
 }
 

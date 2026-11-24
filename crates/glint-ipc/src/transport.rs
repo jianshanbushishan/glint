@@ -24,6 +24,7 @@ const MAX_FRAME: usize = 4 * 1024 * 1024;
 struct DeadlineIo<'a> {
     stream: &'a mut Stream,
     deadline: Instant,
+    retries: u32,
 }
 impl<'a> DeadlineIo<'a> {
     fn new(stream: &'a mut Stream, timeout: Duration) -> io::Result<Self> {
@@ -31,13 +32,27 @@ impl<'a> DeadlineIo<'a> {
         Ok(Self {
             stream,
             deadline: Instant::now() + timeout,
+            retries: 0,
         })
     }
-    fn retry(&self) -> io::Result<()> {
-        if Instant::now() >= self.deadline {
+    fn retry(&mut self) -> io::Result<()> {
+        let now = Instant::now();
+        if now >= self.deadline {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "本地通信超时"));
         }
-        std::thread::sleep(Duration::from_millis(3));
+        let attempt = self.retries;
+        self.retries = self.retries.saturating_add(1);
+        if attempt < 8 {
+            std::thread::yield_now();
+        } else {
+            let remaining = self.deadline.saturating_duration_since(now);
+            let pause = if attempt < 16 {
+                Duration::from_millis(1)
+            } else {
+                Duration::from_millis(3)
+            };
+            std::thread::sleep(pause.min(remaining));
+        }
         Ok(())
     }
 }
@@ -56,15 +71,18 @@ impl Read for DeadlineIo<'_> {
                 {
                     self.retry()?
                 }
-                result => return result,
+                result => {
+                    self.retries = 0;
+                    return result;
+                }
             }
         }
     }
 }
 impl Write for DeadlineIo<'_> {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        // Keep writes below the default named-pipe buffer size. PIPE_NOWAIT may
-        // otherwise return zero forever for a frame larger than its capacity.
+        // Keep writes within the default Windows named-pipe buffer size (512 bytes).
+        // PIPE_NOWAIT may otherwise return zero forever for a chunk larger than capacity.
         let chunk = &buffer[..buffer.len().min(512)];
         loop {
             match self.stream.write(chunk) {
@@ -77,7 +95,10 @@ impl Write for DeadlineIo<'_> {
                 {
                     self.retry()?
                 }
-                result => return result,
+                result => {
+                    self.retries = 0;
+                    return result;
+                }
             }
         }
     }
@@ -109,8 +130,9 @@ fn receive<T: DeserializeOwned>(stream: &mut impl Read) -> anyhow::Result<T> {
     stream.read_exact(&mut size)?;
     let size = u32::from_le_bytes(size) as usize;
     ensure!((1..=MAX_FRAME).contains(&size), "IPC 消息长度无效");
-    let mut body = vec![0; size];
-    stream.read_exact(&mut body)?;
+    let mut body = Vec::with_capacity(size.min(64 * 1024));
+    stream.take(size as u64).read_to_end(&mut body)?;
+    ensure!(body.len() == size, "IPC 消息不完整");
     Ok(serde_json::from_slice(&body)?)
 }
 
@@ -127,6 +149,14 @@ pub fn request(dir: &Path, command: Command) -> anyhow::Result<Response> {
     )?;
     receive(&mut DeadlineIo::new(&mut stream, Duration::from_secs(12))?)
         .context("Glint 响应超时或连接中断")
+}
+
+struct ClientGuard(Arc<AtomicUsize>);
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 pub struct Server(Listener);
@@ -160,34 +190,62 @@ impl Server {
         while !stop.load(Ordering::Relaxed) {
             let mut stream = match self.0.accept() {
                 Ok(stream) => stream,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(15));
+                    continue;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::Interrupted
+                            | io::ErrorKind::BrokenPipe
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::ConnectionAborted
+                    ) =>
+                {
                     continue;
                 }
                 Err(error) => return Err(error.into()),
             };
-            if clients.load(Ordering::Relaxed) >= 8 {
+            if clients.load(Ordering::Acquire) >= 8 {
+                std::thread::sleep(Duration::from_millis(10));
                 continue;
             }
-            clients.fetch_add(1, Ordering::Relaxed);
-            let clients = clients.clone();
+            clients.fetch_add(1, Ordering::AcqRel);
+            let guard = ClientGuard(clients.clone());
             let handler = handler.clone();
             std::thread::spawn(move || {
+                let _guard = guard;
                 let _ = handle_client(&mut stream, handler.as_ref());
-                clients.fetch_sub(1, Ordering::Relaxed);
             });
         }
         // Deliver the Quit response before releasing the instance lock and exiting.
-        while clients.load(Ordering::Relaxed) != 0 {
+        while clients.load(Ordering::Acquire) != 0 {
             std::thread::sleep(Duration::from_millis(10));
         }
         Ok(())
     }
 }
 
+fn is_transport_disconnect(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<io::Error>().is_some_and(|io_err| {
+            matches!(
+                io_err.kind(),
+                io::ErrorKind::TimedOut
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+            )
+        })
+    })
+}
+
 fn handle_client(stream: &mut Stream, handler: &dyn Fn(Command) -> Response) -> anyhow::Result<()> {
     let response = match receive(&mut DeadlineIo::new(stream, Duration::from_secs(2))?) {
         Ok(command) => handler(command),
+        Err(error) if is_transport_disconnect(&error) => return Err(error),
         Err(error) => Response::error(format!("无效请求：{error}")),
     };
     send(

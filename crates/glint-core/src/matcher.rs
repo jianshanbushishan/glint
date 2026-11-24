@@ -1,19 +1,56 @@
-use crate::recognizer::{PrefixDescriptors, PrefixTracker, direction_score, directions};
-use crate::{ActionSpec, Config, Point};
+use crate::recognizer::{
+    DirectionDescriptor, PrefixDescriptors, PrefixTracker, direction_score, directions,
+};
+use crate::{ActionSpec, Config, Point, normalize_application_path};
 use anyhow::{Context, Result};
-use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
+use regex::{RegexBuilder, RegexSet, RegexSetBuilder};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
 
+struct PackageEntry {
+    id: String,
+    patterns: RegexSet,
+    actions: Vec<ActionSpec>,
+    is_app_package: bool,
+}
+
+struct ApplicationEntry {
+    id: String,
+    disabled: bool,
+    inherit_global: bool,
+}
+
 pub struct Matcher {
     excluded: RegexSet,
-    packages: Vec<(String, RegexSet, Vec<ActionSpec>)>,
-    applications: Vec<(Regex, String, bool, bool)>,
-    templates: Vec<(String, Vec<(f64, f64)>)>,
+    packages: Vec<PackageEntry>,
+    applications: HashMap<String, ApplicationEntry>,
+    disabled_applications: HashSet<String>,
+    templates: Vec<(String, DirectionDescriptor)>,
     threshold: f32,
     prefix_templates: HashMap<String, Arc<PrefixDescriptors>>,
+}
+
+fn compile_regex_set(
+    expressions: &[String],
+    describe: impl Fn(usize, &str) -> String,
+) -> Result<RegexSet> {
+    match RegexSetBuilder::new(expressions)
+        .case_insensitive(true)
+        .build()
+    {
+        Ok(set) => Ok(set),
+        Err(set_error) => {
+            for (i, expression) in expressions.iter().enumerate() {
+                RegexBuilder::new(expression)
+                    .case_insensitive(true)
+                    .build()
+                    .with_context(|| describe(i, expression))?;
+            }
+            Err(set_error.into())
+        }
+    }
 }
 
 impl Matcher {
@@ -27,51 +64,47 @@ impl Matcher {
     }
 
     fn build(config: &Config, cache_geometry: bool) -> Result<Self> {
-        for (i, expression) in config.excluded.iter().enumerate() {
-            RegexBuilder::new(expression)
-                .case_insensitive(true)
-                .build()
-                .with_context(|| format!("excluded[{i}]: invalid regex {expression:?}"))?;
-        }
-        let excluded = RegexSetBuilder::new(&config.excluded)
-            .case_insensitive(true)
-            .build()?;
-        let mut packages = Vec::new();
-        for package in &config.packages {
-            for expression in &package.patterns {
-                RegexBuilder::new(expression)
-                    .case_insensitive(true)
-                    .build()
-                    .with_context(|| {
-                        format!(
-                            "package {:?}: invalid match regex {expression:?}",
-                            package.id
-                        )
-                    })?;
+        let excluded = compile_regex_set(&config.excluded, |i, expression| {
+            format!("excluded[{i}]: invalid regex {expression:?}")
+        })?;
+        let mut applications = HashMap::with_capacity(config.applications.len());
+        let mut disabled_applications = HashSet::new();
+        let mut app_ids = HashSet::with_capacity(config.applications.len());
+        for app in &config.applications {
+            let key = normalize_application_path(&app.process_path)?.to_lowercase();
+            if app.disabled {
+                disabled_applications.insert(key.clone());
             }
-            let patterns = RegexSetBuilder::new(&package.patterns)
-                .case_insensitive(true)
-                .build()?;
-            packages.push((package.id.clone(), patterns, package.actions.clone()));
+            app_ids.insert(app.id.as_str());
+            applications.insert(
+                key,
+                ApplicationEntry {
+                    id: app.id.clone(),
+                    disabled: app.disabled,
+                    inherit_global: app.inherit_global,
+                },
+            );
         }
-        let applications = config
-            .applications
-            .iter()
-            .map(|app| {
-                Ok((
-                    RegexBuilder::new(&app.pattern()?)
-                        .case_insensitive(true)
-                        .build()?,
-                    app.id.clone(),
-                    app.disabled,
-                    app.inherit_global,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut packages = Vec::with_capacity(config.packages.len());
+        for package in &config.packages {
+            let patterns = compile_regex_set(&package.patterns, |_, expression| {
+                format!(
+                    "package {:?}: invalid match regex {expression:?}",
+                    package.id
+                )
+            })?;
+            packages.push(PackageEntry {
+                is_app_package: app_ids.contains(package.id.as_str()),
+                id: package.id.clone(),
+                patterns,
+                actions: package.actions.clone(),
+            });
+        }
         Ok(Self {
             excluded,
             packages,
             applications,
+            disabled_applications,
             templates: config
                 .gestures
                 .iter()
@@ -95,49 +128,49 @@ impl Matcher {
         })
     }
     pub fn is_excluded(&self, process: &str) -> bool {
-        self.excluded.is_match(process)
-            || self
-                .applications
-                .iter()
-                .any(|(pattern, _, disabled, _)| *disabled && pattern.is_match(process))
+        if self.excluded.is_match(process) {
+            return true;
+        }
+        if self.disabled_applications.is_empty() {
+            return false;
+        }
+        self.disabled_applications.contains(&process.to_lowercase())
     }
     /// Applicable packages in action priority order, shared by recognition and dispatch.
     fn matching_packages(&self, process: &str) -> Vec<&[ActionSpec]> {
-        if self.is_excluded(process) {
+        if self.excluded.is_match(process) {
             return Vec::new();
         }
-        if let Some((_, id, _, inherit_global)) = self
-            .applications
-            .iter()
-            .rev()
-            .find(|(pattern, _, _, _)| pattern.is_match(process))
-        {
-            let mut packages = Vec::new();
-            for wanted in [Some(id.as_str()), inherit_global.then_some("global")]
-                .into_iter()
-                .flatten()
-            {
-                if let Some((_, _, actions)) = self
-                    .packages
-                    .iter()
-                    .find(|(package_id, _, _)| package_id == wanted)
-                {
-                    packages.push(actions.as_slice());
-                }
+        let process_lower = if self.applications.is_empty() {
+            None
+        } else {
+            Some(process.to_lowercase())
+        };
+        if let Some(lower) = process_lower.as_deref() {
+            if self.disabled_applications.contains(lower) {
+                return Vec::new();
             }
-            return packages;
+            if let Some(app) = self.applications.get(lower) {
+                if app.disabled {
+                    return Vec::new();
+                }
+                let mut packages = Vec::with_capacity(2);
+                for wanted in [Some(app.id.as_str()), app.inherit_global.then_some("global")]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(package) = self.packages.iter().find(|p| p.id == wanted) {
+                        packages.push(package.actions.as_slice());
+                    }
+                }
+                return packages;
+            }
         }
         self.packages
             .iter()
             .rev()
-            .filter(|(id, patterns, _)| {
-                !self
-                    .applications
-                    .iter()
-                    .any(|(_, app_id, _, _)| app_id == id)
-                    && patterns.is_match(process)
-            })
-            .map(|(_, _, actions)| actions.as_slice())
+            .filter(|package| !package.is_app_package && package.patterns.is_match(process))
+            .map(|package| package.actions.as_slice())
             .collect()
     }
 

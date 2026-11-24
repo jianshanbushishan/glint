@@ -103,6 +103,10 @@ pub fn gesture_label(gesture: &str) -> String {
     static TEMPLATES: std::sync::OnceLock<Vec<glint_core::GestureTemplate>> =
         std::sync::OnceLock::new();
     let templates = TEMPLATES.get_or_init(glint_core::default_templates);
+    gesture_label_in(gesture, templates)
+}
+
+pub fn gesture_label_in(gesture: &str, templates: &[glint_core::GestureTemplate]) -> String {
     gesture
         .split('+')
         .map(|part| match part {

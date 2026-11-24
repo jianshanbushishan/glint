@@ -221,13 +221,6 @@ fn run(
             visible: false,
         })
     });
-    let timer = unsafe { SetTimer(window, 1, 16, None) };
-    if timer == 0 {
-        unsafe {
-            DestroyWindow(window);
-        }
-        return Err(native_error("Start trail frame timer"));
-    }
     let _ = ready.send(Ok(unsafe { GetCurrentThreadId() }));
     let mut exit = false;
     let mut error = None;
@@ -235,6 +228,8 @@ fn run(
     let mut last_paint = Instant::now();
     let mut presented_epoch = None;
     let mut frames = 0_u64;
+    let mut timer_active = false;
+    let mut frame_cache: Option<Frame> = None;
     while !exit {
         let got = unsafe { GetMessageW(&mut message, null_mut(), 0, 0) };
         if got <= 0 {
@@ -244,7 +239,7 @@ fn run(
             break;
         }
         if message.message == WAKE
-            || (message.message == WM_TIMER && message.hwnd == window && message.wParam == timer)
+            || (message.message == WM_TIMER && message.hwnd == window && message.wParam == 1)
         {
             if message.message == WAKE {
                 notified.store(false, Ordering::Release);
@@ -266,6 +261,13 @@ fn run(
                     }
                     DrawCommand::Clear(epoch) => {
                         presented_epoch = None;
+                        frame_cache = None;
+                        if timer_active {
+                            unsafe {
+                                KillTimer(window, 1);
+                            }
+                            timer_active = false;
+                        }
                         unsafe {
                             ShowWindow(window, SW_HIDE);
                         }
@@ -296,6 +298,7 @@ fn run(
                             rgb: color(&config.color).unwrap_or(0x69e0c3),
                             width: config.width,
                         };
+                        let mut stroke_visible = false;
                         SURFACE.with(|s| {
                             if let Some(s) = s.borrow_mut().as_mut() {
                                 s.epoch = epoch;
@@ -304,9 +307,20 @@ fn run(
                                 s.points = vec![point];
                                 s.opacity = (config.opacity * 255.0).round() as u8;
                                 s.visible = config.opacity > 0.0 && config.width > 0.0;
+                                stroke_visible = s.visible;
                                 show = Some(s.visible);
                             }
                         });
+                        if stroke_visible && !timer_active {
+                            if unsafe { SetTimer(window, 1, 16, None) } != 0 {
+                                timer_active = true;
+                            }
+                        } else if !stroke_visible && timer_active {
+                            unsafe {
+                                KillTimer(window, 1);
+                            }
+                            timer_active = false;
+                        }
                         dirty = true;
                     }
                 }
@@ -335,13 +349,16 @@ fn run(
                 }
             }
             needs_paint |= dirty;
-            if needs_paint && (show.is_some() || last_paint.elapsed() >= Duration::from_millis(16))
+            if needs_paint
+                && (frames == 0 || show.is_some() || last_paint.elapsed() >= Duration::from_millis(16))
             {
                 let painted = SURFACE.with(|slot| {
                     let slot = slot.borrow();
                     if log::log_enabled!(log::Level::Trace)
                         && frames == 0
                         && let Some(s) = slot.as_ref()
+                        && s.visible
+                        && s.points.len() >= 2
                     {
                         log::trace!(
                             "trail first frame: samples={} first={:?} last={:?}",
@@ -351,12 +368,14 @@ fn run(
                         );
                     }
                     slot.as_ref()
-                        .map_or(Ok(false), |surface| present(window, surface))
+                        .map_or(Ok(false), |surface| present(window, surface, &mut frame_cache))
                 });
                 match painted {
                     Ok(true) => {
                         presented_epoch =
                             SURFACE.with(|slot| slot.borrow().as_ref().map(|s| s.epoch));
+                        frames += 1;
+                        last_paint = Instant::now();
                     }
                     Ok(false) => {}
                     Err(failure) => {
@@ -365,8 +384,6 @@ fn run(
                     }
                 }
                 needs_paint = false;
-                frames += 1;
-                last_paint = Instant::now();
             }
             // Mouse samples can wake this loop far more often than frame submission.
             // present() already raises new frames; only the frame timer needs to
@@ -389,8 +406,11 @@ fn run(
             }
         }
     }
+    drop(frame_cache);
     unsafe {
-        KillTimer(window, timer);
+        if timer_active {
+            KillTimer(window, 1);
+        }
         ShowWindow(window, SW_HIDE);
         DestroyWindow(window);
     }
@@ -406,6 +426,9 @@ struct Frame {
     dc: HDC,
     bitmap: HBITMAP,
     previous: HGDIOBJ,
+    bits: *mut u8,
+    width: i32,
+    height: i32,
 }
 impl Drop for Frame {
     fn drop(&mut self) {
@@ -472,7 +495,7 @@ fn trail_path(points: &[Point], origin: Point) -> Option<tiny_skia::Path> {
     path.finish()
 }
 
-/// Rasterize coverage into premultiplied BGRA for UpdateLayeredWindow.
+/// Rasterize coverage directly into premultiplied BGRA for UpdateLayeredWindow.
 fn rasterize(
     pixels: &mut [u8],
     width: u32,
@@ -486,10 +509,12 @@ fn rasterize(
     pixels.fill(0);
     let path = trail_path(points, origin).context("Build trail path")?;
     let mut paint = Paint::default();
+    // tiny-skia writes premultiplied RGBA; supplying (B, G, R, 255) produces
+    // premultiplied BGRA directly for the Windows DIB without a post-pass swap.
     paint.set_color_rgba8(
-        (pen.rgb >> 16) as u8,
-        (pen.rgb >> 8) as u8,
         pen.rgb as u8,
+        (pen.rgb >> 8) as u8,
+        (pen.rgb >> 16) as u8,
         255,
     );
     paint.anti_alias = true;
@@ -502,15 +527,10 @@ fn rasterize(
     let mut pixmap =
         PixmapMut::from_bytes(pixels, width, height).context("Create trail raster surface")?;
     pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-    // tiny-skia produces premultiplied RGBA; the Windows DIB expects BGRA.
-    // Preserve coverage alpha, including for pure black and overlapping segments.
-    for pixel in pixels.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-    }
     Ok(())
 }
 
-fn present(window: HWND, surface: &Surface) -> Result<bool> {
+fn present(window: HWND, surface: &Surface, cache: &mut Option<Frame>) -> Result<bool> {
     if !surface.visible || surface.points.len() < 2 {
         return Ok(false);
     }
@@ -537,31 +557,42 @@ fn present(window: HWND, surface: &Surface) -> Result<bool> {
         if width <= 0 || height <= 0 {
             return Ok(false);
         }
-        let dc = CreateCompatibleDC(null_mut());
-        if dc.is_null() {
-            return Err(native_error("Create trail bitmap DC"));
+        let reuse = cache
+            .as_ref()
+            .is_some_and(|frame| frame.width == width && frame.height == height);
+        if !reuse {
+            *cache = None;
+            let dc = CreateCompatibleDC(null_mut());
+            if dc.is_null() {
+                return Err(native_error("Create trail bitmap DC"));
+            }
+            let mut info: BITMAPINFO = zeroed();
+            info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            info.bmiHeader.biWidth = width;
+            info.bmiHeader.biHeight = -height;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            let mut bits = null_mut();
+            let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+            if bitmap.is_null() {
+                let error = native_error("Create trail bitmap");
+                DeleteDC(dc);
+                return Err(error);
+            }
+            *cache = Some(Frame {
+                dc,
+                bitmap,
+                previous: SelectObject(dc, bitmap),
+                bits: bits as *mut u8,
+                width,
+                height,
+            });
         }
-        let mut info: BITMAPINFO = zeroed();
-        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-        info.bmiHeader.biWidth = width;
-        info.bmiHeader.biHeight = -height;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-        let mut bits = null_mut();
-        let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-        if bitmap.is_null() {
-            let error = native_error("Create trail bitmap");
-            DeleteDC(dc);
-            return Err(error);
-        }
-        let _frame = Frame {
-            dc,
-            bitmap,
-            previous: SelectObject(dc, bitmap),
-        };
+        let frame = cache.as_ref().unwrap();
+        let dc = frame.dc;
         let pixels =
-            std::slice::from_raw_parts_mut(bits as *mut u8, width as usize * height as usize * 4);
+            std::slice::from_raw_parts_mut(frame.bits, width as usize * height as usize * 4);
         rasterize(
             pixels,
             width as u32,

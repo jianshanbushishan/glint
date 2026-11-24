@@ -87,13 +87,15 @@ fn start_worker(dir: PathBuf, smoke_test: bool) -> (mpsc::Sender<Job>, mpsc::Rec
     std::thread::spawn(move || {
         let send = |command: Command, passive: bool| {
             let result = glint_ipc::request(&dir, command.clone()).map_err(|e| e.to_string());
-            let ok = result.is_ok();
+            let has_full_snapshot = result
+                .as_ref()
+                .is_ok_and(|r| r.ok && r.config.is_some() && r.status.is_some());
             let _ = replies.send(Reply {
                 command: Some(command),
                 passive,
                 result,
             });
-            ok
+            has_full_snapshot
         };
         loop {
             match jobs.recv_timeout(Duration::from_secs(1)) {
@@ -117,8 +119,9 @@ fn start_worker(dir: PathBuf, smoke_test: bool) -> (mpsc::Sender<Job>, mpsc::Rec
                     send(Command::GetConfig, false);
                 }
                 Ok(Job::Command(command)) => {
-                    send(command, false);
-                    send(Command::GetConfig, true);
+                    if !send(command, false) {
+                        send(Command::GetConfig, true);
+                    }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // GetConfig includes Status, so one round trip refreshes both.
@@ -413,10 +416,10 @@ fn main() {
             })
             .detach();
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(900.), px(740.)), cx)),
-                window_min_size: Some(size(px(760.), px(520.))),
+                window_bounds: Some(WindowBounds::centered(size(px(960.), px(740.)), cx)),
+                window_min_size: Some(size(px(780.), px(540.))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("设置".into()),
+                    title: Some("Glint · 设置".into()),
                     ..Default::default()
                 }),
                 ..Default::default()

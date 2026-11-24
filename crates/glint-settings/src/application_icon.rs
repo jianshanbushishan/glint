@@ -8,10 +8,12 @@ use std::{
 pub(crate) fn load(path: &str) -> Option<Arc<RenderImage>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<RenderImage>>>>> = OnceLock::new();
     let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
-    cache
-        .entry(path.to_owned())
-        .or_insert_with(|| extract(path))
-        .clone()
+    if let Some(cached) = cache.get(path) {
+        return cached.clone();
+    }
+    let extracted = extract(path);
+    cache.insert(path.to_owned(), extracted.clone());
+    extracted
 }
 
 #[cfg(not(windows))]

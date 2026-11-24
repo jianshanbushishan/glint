@@ -83,7 +83,7 @@ pub fn run(dir: PathBuf, no_hooks: bool) -> Result<()> {
     let (jobs, jobs_rx) = bounded::<Job>(32);
     let (completions_tx, completions_rx) = bounded(64);
     let worker_generation = generation.clone();
-    std::thread::Builder::new()
+    let action_thread = std::thread::Builder::new()
         .name("glint-actions".into())
         .spawn(move || action_worker(jobs_rx, completions_tx, worker_generation))?;
     let (controls_tx, controls_rx) = bounded::<Control>(32);
@@ -175,6 +175,8 @@ pub fn run(dir: PathBuf, no_hooks: bool) -> Result<()> {
     stop_server.store(true, Ordering::Relaxed);
     let _ = server_thread.join();
     engine.log("引擎已退出");
+    drop(engine);
+    let _ = action_thread.join();
     Ok(())
 }
 
@@ -271,7 +273,13 @@ impl Engine {
     // Stage file updates, validate the complete resulting configuration, restore on failure.
     fn update_file(&mut self, file: &str, bytes: &[u8]) -> Result<()> {
         let path = self.dir.join(file);
-        let previous = fs::read(&path).ok();
+        let previous = match fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(error).with_context(|| format!("读取原配置失败：{}", path.display()));
+            }
+        };
         write_atomic(&path, bytes)?;
         let result = self.reload();
         if let Err(error) = result {
@@ -604,7 +612,17 @@ impl Engine {
                     }
                     TrayAction::OpenSettings => self.open_settings(),
                     TrayAction::RestartElevated => {
-                        glint_platform::elevation::restart_elevated(&self.dir)
+                        let dir = self.dir.clone();
+                        std::thread::Builder::new()
+                            .name("glint-elevate".into())
+                            .spawn(move || {
+                                if let Err(error) = glint_platform::elevation::restart_elevated(&dir)
+                                {
+                                    log::error!("以管理员身份重启失败：{error:#}");
+                                }
+                            })
+                            .map(|_| ())
+                            .context("启动提权线程失败")
                     }
                 };
                 if let Err(error) = result {
@@ -694,6 +712,14 @@ fn fingerprint(dir: &Path) -> u64 {
                 continue;
             }
             if !matches!(path.extension().and_then(|e| e.to_str()), Some("json")) {
+                continue;
+            }
+            if depth == 0
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("settings.json"))
+            {
                 continue;
             }
             let stamp = meta
