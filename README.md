@@ -6,7 +6,7 @@
 
 ## 启动
 
-运行 `dist/Glint-v0.2.5-windows-x64-setup.exe` 安装后，可从开始菜单打开 Glint。安装仅针对当前用户，默认目录为 `%LOCALAPPDATA%\Programs\Glint`，可选创建桌面快捷方式；可从 Windows“已安装的应用”卸载。升级及卸载保留 `%APPDATA%\Glint` 中的配置，卸载会清理指向本安装目录的开机启动项。
+运行 `dist/Glint-v0.2.6-windows-x64-setup.exe` 安装后，可从开始菜单打开 Glint。安装仅针对当前用户，默认目录为 `%LOCALAPPDATA%\Programs\Glint`，可选创建桌面快捷方式；可从 Windows“已安装的应用”卸载。升级及卸载保留 `%APPDATA%\Glint` 中的配置，卸载会清理指向本安装目录的开机启动项。
 
 从 `dist/Glint` 双击 **`glint-settings.exe`**。设置程序会自动启动同目录的 `glint.exe`。也可以只运行后台，通过托盘菜单打开设置、暂停、重载或退出。
 
